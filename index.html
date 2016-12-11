@@ -26,7 +26,8 @@
 <script type="x-shader/x-vertex" id="simulation_vs">
 varying vec2 vUv;
 
-void main() {
+void main()
+{
     vUv = vec2(uv.x, uv.y);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
@@ -35,7 +36,8 @@ void main() {
 uniform sampler2D positions;
 varying vec2 vUv;
 
-void main() {
+void main()
+{
     vec3 pos = texture2D(positions, vUv).rgb;
     gl_FragColor = vec4(pos, 1.0);
 }
@@ -44,14 +46,12 @@ void main() {
 uniform sampler2D positions;
 uniform float pointSize;
 
-void main() {
-
+void main()
+{
     //the mesh is a normalized square so the uvs = the xy positions of the vertices
     vec3 pos = texture2D(positions, position.xy).xyz;
-
     //pos now contains the position of a point in space that can be transformed
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-
     gl_PointSize = pointSize;
 }
 </script>
@@ -68,13 +68,14 @@ void main()
     var camera;
     var renderer;
     var stats;
+    var simulationShader;
+    var renderShader;
 
     window.onload = function () {
-        stats = new Stats();
-        // 0: fps, 1: ms, 2: mb, 3+: custom
-        stats.showPanel(0);
-        document.body.appendChild(stats.dom);
         init();
+        resize();
+        initParticles(256);
+        render();
     };
 
     function getShader(id) {
@@ -82,39 +83,27 @@ void main()
     }
 
     function init() {
-        var w = window.innerWidth;
-        var h = window.innerHeight;
-
-        //regular scene creation
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60, w / h, 1, 10000);
-        camera.position.z = 500;
+        stats = new Stats();
+        // 0: fps, 1: ms, 2: mb, 3+: custom
+        stats.showPanel(0);
+        document.body.appendChild(stats.dom);
 
         renderer = new THREE.WebGLRenderer();
-        renderer.setSize(w, h);
         document.body.appendChild(renderer.domElement);
+        window.addEventListener("resize", resize);
 
-        //width / height of the FBO
-        var width = 256;
-        var height = 256;
-
-        //populate a Float32Array of random positions
-        var data = getRandomData(width, height, 256);
-        var positions = new THREE.DataTexture(data, width, height, THREE.RGBFormat, THREE.FloatType);
-        positions.needsUpdate = true;
-
-        //this will be used to update the particles' positions
-        var simulationShader = new THREE.ShaderMaterial({
+        // this will be used to update the particles' positions
+        simulationShader = new THREE.ShaderMaterial({
             uniforms: {
-                positions: { type: "t", value: positions }
+                positions: { type: "t", value: null }
             },
             vertexShader: getShader("simulation_vs"),
             fragmentShader: getShader("simulation_fs")
         });
 
-        //this will be used to represent the particles on screen
-        //note that 'positions' is a texture that will be set and updated during the FBO.update() call
-        var renderShader = new THREE.ShaderMaterial({
+        // this will be used to represent the particles on screen
+        // note that 'positions' is a texture that will be set and updated during the FBO.update() call
+        renderShader = new THREE.ShaderMaterial({
             uniforms: {
                 positions: { type: "t", value: null },
                 pointSize: { type: "f", value: 2 }
@@ -125,13 +114,18 @@ void main()
             blending: THREE.AdditiveBlending
         });
 
-        //init the FBO
-        FBO.init(width, height, renderer, simulationShader, renderShader);
-        scene.add(FBO.particles);
+        camera = new THREE.PerspectiveCamera(60, 1, 1, 1000);
+        camera.position.z = 200;
+    }
 
-        window.addEventListener("resize", resize);
-        resize();
-        render();
+    function initParticles(n) {
+        var data = getRandomData(n, n, 100);
+        var positions = new THREE.DataTexture(data, n, n, THREE.RGBFormat, THREE.FloatType);
+        positions.needsUpdate = true;
+        simulationShader.uniforms.positions.value = positions;
+        FBO.init(n, n, renderer, simulationShader, renderShader);
+        scene = new THREE.Scene();
+        scene.add(FBO.particles);
     }
 
     // returns an array of random 3D coordinates
