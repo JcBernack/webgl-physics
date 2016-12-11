@@ -3,15 +3,169 @@
 <head>
     <meta charset="UTF-8">
     <title>Particles</title>
-    <link rel="stylesheet" href="node_modules/reset-css/reset.css">
     <style type="text/css">
+        head, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            top: 0;
+            left: 0;
+            margin: 0;
+            padding: 0;
+        }
+
         canvas {
             display: block;
         }
     </style>
-    <script src="node_modules/three/build/three.min.js"></script>
 </head>
 <body>
-<script src="simulation.js"></script>
+<script src="node_modules/three/build/three.min.js"></script>
+<script src="node_modules/stats.js/build/stats.min.js"></script>
+<script src="fbo.js"></script>
+<script type="x-shader/x-vertex" id="simulation_vs">
+varying vec2 vUv;
+
+void main() {
+    vUv = vec2(uv.x, uv.y);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+</script>
+<script type="x-shader/x-fragment" id="simulation_fs">
+uniform sampler2D positions;
+varying vec2 vUv;
+
+void main() {
+    vec3 pos = texture2D(positions, vUv).rgb;
+    gl_FragColor = vec4(pos, 1.0);
+}
+</script>
+<script type="x-shader/x-vertex" id="render_vs">
+uniform sampler2D positions;
+uniform float pointSize;
+
+void main() {
+
+    //the mesh is a normalized square so the uvs = the xy positions of the vertices
+    vec3 pos = texture2D(positions, position.xy).xyz;
+
+    //pos now contains the position of a point in space that can be transformed
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+
+    gl_PointSize = pointSize;
+}
+</script>
+<script type="x-shader/x-fragment" id="render_fs">
+void main()
+{
+    gl_FragColor = vec4(vec3(1), 0.25);
+}
+</script>
+
+<script>
+
+    var scene;
+    var camera;
+    var renderer;
+    var stats;
+
+    window.onload = function () {
+        stats = new Stats();
+        // 0: fps, 1: ms, 2: mb, 3+: custom
+        stats.showPanel(0);
+        document.body.appendChild(stats.dom);
+        init();
+    };
+
+    function getShader(id) {
+        return document.getElementById(id).innerText;
+    }
+
+    function init() {
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+
+        //regular scene creation
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(60, w / h, 1, 10000);
+        camera.position.z = 500;
+
+        renderer = new THREE.WebGLRenderer();
+        renderer.setSize(w, h);
+        document.body.appendChild(renderer.domElement);
+
+        //width / height of the FBO
+        var width = 256;
+        var height = 256;
+
+        //populate a Float32Array of random positions
+        var data = getRandomData(width, height, 256);
+        var positions = new THREE.DataTexture(data, width, height, THREE.RGBFormat, THREE.FloatType);
+        positions.needsUpdate = true;
+
+        //this will be used to update the particles' positions
+        var simulationShader = new THREE.ShaderMaterial({
+            uniforms: {
+                positions: { type: "t", value: positions }
+            },
+            vertexShader: getShader("simulation_vs"),
+            fragmentShader: getShader("simulation_fs")
+        });
+
+        //this will be used to represent the particles on screen
+        //note that 'positions' is a texture that will be set and updated during the FBO.update() call
+        var renderShader = new THREE.ShaderMaterial({
+            uniforms: {
+                positions: { type: "t", value: null },
+                pointSize: { type: "f", value: 2 }
+            },
+            vertexShader: getShader("render_vs"),
+            fragmentShader: getShader("render_fs"),
+            transparent: true,
+            blending: THREE.AdditiveBlending
+        });
+
+        //init the FBO
+        FBO.init(width, height, renderer, simulationShader, renderShader);
+        scene.add(FBO.particles);
+
+        window.addEventListener("resize", resize);
+        resize();
+        render();
+    }
+
+    // returns an array of random 3D coordinates
+    function getRandomData(width, height, size) {
+        var len = width * height * 3;
+        var data = new Float32Array(len);
+        while (len--) data[len] = (Math.random() - 0.5) * size;
+        return data;
+    }
+
+    function resize() {
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+    }
+
+    // main loop
+    function render() {
+        stats.begin();
+        //update the simulation
+        FBO.update();
+        //update mesh
+        var speed = 0.001;
+        FBO.particles.rotation.x += speed;
+        FBO.particles.rotation.y += speed;
+        FBO.particles.rotation.z += speed;
+        //render the particles at the new location
+        renderer.render(scene, camera);
+        stats.end();
+        requestAnimationFrame(render);
+    }
+
+</script>
 </body>
 </html>
