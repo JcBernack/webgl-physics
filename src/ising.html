@@ -8,9 +8,10 @@
             margin: 0;
             overflow: hidden;
             cursor: pointer;
+            color: white;
         }
 
-        #chart {
+        #chartContainer {
             position: absolute;
             bottom: 0;
             left: 0;
@@ -19,7 +20,10 @@
 </head>
 <body>
 
-<canvas id="chart" width="400" height="100"></canvas>
+<div id="chartContainer">
+    <div>Magnetization</div>
+    <canvas id="chart" width="400" height="100"></canvas>
+</div>
 
 <script src="lib/three.min.js"></script>
 <script src="lib/GPUComputationRenderer.js"></script>
