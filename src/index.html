@@ -38,6 +38,7 @@ void main()	{
     vec4 cPosition = texture2D(texturePosition, cCoords);
     vec4 cDirection = texture2D(textureDirection, cCoords);
 
+    float neighborCount = 0.0;
     vec4 neighborDirection = vec4(0.0);
     for (float y = 0.0; y < height; y++) {
         for (float x = 0.0; x < width; x++) {
@@ -49,12 +50,14 @@ void main()	{
             // periodic boundary conditions are disregarded here
             if (length(dPos) < interactionRadius) {
                 neighborDirection += pDirection;
+                neighborCount++;
             }
         }
     }
+    // add random direction
     float angle = 2.0 * PI * rand(cPosition.xy);
     vec4 randDirection = vec4(cos(angle), sin(angle), 0, 0);
-    gl_FragColor = normalize(neighborDirection) + noiseStrength * randDirection;
+    gl_FragColor = normalize(neighborDirection + neighborCount * noiseStrength * randDirection);
 }
 </script>
 
@@ -86,6 +89,7 @@ void main() {
 
 <script type="x-shader/x-fragment" id="renderFS">
 void main() {
+    // draw round particles
     float len = length(gl_PointCoord - vec2(0.5, 0.5));
     if (len > 0.5) discard;
     gl_FragColor = vec4(1.0);
@@ -103,7 +107,7 @@ void main() {
     var directionVariable;
     var particleUniforms;
     var parameters = {
-        noiseStrength: 0.6,
+        noiseStrength: 0.5,
         interactionRadius: 2,
         velocity: 0.2,
         systemSize: 50
@@ -219,7 +223,7 @@ void main() {
                 len = Math.sqrt(len);
                 for (j = 0; j < dimension; j++) rand[j] /= len;
             }
-            // copy vector texture data
+            // copy vector to texture data
             for (j = 0; j < 4; j++) data[i+j] = rand[j];
         }
     }
@@ -248,9 +252,9 @@ void main() {
     function initializeParameterGUI() {
         var gui = new dat.GUI();
         var simFolder = gui.addFolder("Simulation parameters");
-        simFolder.add(parameters, "noiseStrength", 0, 10.0).onChange(updateUniforms);
-        simFolder.add(parameters, "interactionRadius", 0.1, 10.0).onChange(updateUniforms);
-        simFolder.add(parameters, "velocity", 0.01, 1.0).onChange(updateUniforms);
+        simFolder.add(parameters, "noiseStrength", 0, 1).onChange(updateUniforms);
+        simFolder.add(parameters, "interactionRadius", 0.1, 10).onChange(updateUniforms);
+        simFolder.add(parameters, "velocity", 0.01, 1).onChange(updateUniforms);
         simFolder.add(parameters, "systemSize", 10, 200).onChange(updateUniforms);
         var buttonRestart = {
             restartSimulation: function() {
