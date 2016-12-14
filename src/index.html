@@ -98,8 +98,6 @@ void main() {
 
 <script>
 
-    var N = 128;
-
     var stats;
     var camera, scene, renderer, controls;
     var gpuCompute;
@@ -110,7 +108,8 @@ void main() {
         noiseStrength: 0.5,
         interactionRadius: 2,
         velocity: 0.2,
-        systemSize: 50
+        systemSize: 50,
+        textureWidth: 64
     };
 
     function initialize() {
@@ -128,15 +127,17 @@ void main() {
         camera = new THREE.PerspectiveCamera(75, 1, 5, 15000);
         camera.position.z = 100;
         controls = new THREE.OrbitControls(camera, renderer.domElement);
-        // create scene
-        scene = new THREE.Scene();
         // handle resizing
         windowResize();
         window.addEventListener("resize", windowResize, false);
         // initialize
-        initializeCompute();
         initializeParameterGUI();
-        initializeGeometry();
+        initializeSimulation();
+    }
+
+    function initializeSimulation() {
+        initializeCompute(parameters.textureWidth);
+        initializeGeometry(parameters.textureWidth);
         updateUniforms();
     }
 
@@ -144,14 +145,11 @@ void main() {
         return document.getElementById(id).textContent;
     }
 
-    function initializeCompute() {
-        gpuCompute = new GPUComputationRenderer(N, N, renderer);
-        var positionTexture = gpuCompute.createTexture();
-        var directionTexture = gpuCompute.createTexture();
-        fillTexture(positionTexture, 2, parameters.systemSize, false);
-        fillTexture(directionTexture, 2, 1, true);
-        positionVariable = gpuCompute.addVariable("texturePosition", getShader("computePosition"), positionTexture);
-        directionVariable = gpuCompute.addVariable("textureDirection", getShader("computeDirection"), directionTexture);
+    function initializeCompute(size) {
+        gpuCompute = new GPUComputationRenderer(size, size, renderer);
+        var textures = initializeTextures();
+        positionVariable = gpuCompute.addVariable("texturePosition", getShader("computePosition"), textures.position);
+        directionVariable = gpuCompute.addVariable("textureDirection", getShader("computeDirection"), textures.direction);
         gpuCompute.setVariableDependencies(positionVariable, [positionVariable, directionVariable]);
         gpuCompute.setVariableDependencies(directionVariable, [positionVariable, directionVariable]);
         updateUniforms();
@@ -161,31 +159,38 @@ void main() {
         }
     }
 
-    function restartSimulation() {
-        var positionTexture = gpuCompute.createTexture();
-        var directionTexture = gpuCompute.createTexture();
-        fillTexture(positionTexture, 2, parameters.systemSize, false);
-        fillTexture(directionTexture, 2, 1, true);
-        gpuCompute.renderTexture(positionTexture, positionVariable.renderTargets[0]);
-        gpuCompute.renderTexture(positionTexture, positionVariable.renderTargets[1]);
-        gpuCompute.renderTexture(directionTexture, directionVariable.renderTargets[0]);
-        gpuCompute.renderTexture(directionTexture, directionVariable.renderTargets[1]);
+    function initializeTextures() {
+        var textures = {
+            position: gpuCompute.createTexture(),
+            direction: gpuCompute.createTexture()
+        };
+        fillTexture(textures.position, 2, parameters.systemSize, false);
+        fillTexture(textures.direction, 2, 1, true);
+        return textures;
     }
 
-    function initializeGeometry() {
-        var positions = new Float32Array(N*N*3);
-        var i, j;
-        for (i = 0; i < N*N*3; i++) {
-            positions[i] = 0;
-            positions[i++] = 0;
-            positions[i++] = 0;
-        }
-        var uvs = new Float32Array(N*N*2);
+
+    function restartSimulation() {
+        var textures = initializeTextures();
+        gpuCompute.renderTexture(textures.position, positionVariable.renderTargets[0]);
+        gpuCompute.renderTexture(textures.position, positionVariable.renderTargets[1]);
+        gpuCompute.renderTexture(textures.direction, directionVariable.renderTargets[0]);
+        gpuCompute.renderTexture(textures.direction, directionVariable.renderTargets[1]);
+    }
+
+    function initializeGeometry(size) {
+        // We don't actually need any real geometry, we just need something to render.
+        // The positions don't matter as they are read from the texture,
+        // but the number of vertices should match the number texels in the texture.
+        // The uvs are normalized coordinates which are used to read the real positions
+        // from a texture in the vertex shader.
+        var positions = new Float32Array(size*size*3);
+        var uvs = new Float32Array(size*size*2);
         var p = 0;
-        for (j = 0; j < N; j++) {
-            for (i = 0; i < N; i++) {
-                uvs[p++] = i / ( N - 1 );
-                uvs[p++] = j / ( N - 1 );
+        for (var j = 0; j < size; j++) {
+            for (var i = 0; i < size; i++) {
+                uvs[p++] = i / (size-1);
+                uvs[p++] = j / (size-1);
             }
         }
         var geometry = new THREE.BufferGeometry();
@@ -204,6 +209,8 @@ void main() {
         var particles = new THREE.Points(geometry, material);
         particles.matrixAutoUpdate = false;
         particles.updateMatrix();
+        // create new scene which contains only the particles
+        scene = new THREE.Scene();
         scene.add(particles);
     }
 
@@ -256,6 +263,12 @@ void main() {
         simFolder.add(parameters, "interactionRadius", 0.1, 10).onChange(updateUniforms);
         simFolder.add(parameters, "velocity", 0.01, 1).onChange(updateUniforms);
         simFolder.add(parameters, "systemSize", 10, 200).onChange(updateUniforms);
+        var tmp = { particles: parameters.textureWidth*parameters.textureWidth };
+        var textureWidths = [16, 32, 64, 128, 256];
+        simFolder.add(tmp, "particles", textureWidths.map(function(w) { return w*w; })).onChange(function() {
+            parameters.textureWidth = Math.sqrt(tmp.particles);
+            initializeSimulation();
+        });
         var buttonRestart = {
             restartSimulation: function() {
                 restartSimulation();
