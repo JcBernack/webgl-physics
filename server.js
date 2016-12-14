@@ -4,7 +4,7 @@ const path = require("path");
 
 const app = express();
 app.use(helmet());
-app.use(express.static("."));
+app.use(express.static("./src"));
 
 const port = process.env.PORT || 80;
 const server = app.listen(port, function () {
