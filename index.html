@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Particles</title>
+    <title>Vicsek model</title>
     <style type="text/css">
         body {
             margin: 0;
@@ -20,11 +20,18 @@
 <script src="node_modules/dat.gui/build/dat.gui.min.js"></script>
 
 <script type="x-shader/x-fragment" id="computeDirection">
+#define PI 3.1415926535897932384626433832795
+
 uniform float noiseStrength;
 uniform float interactionRadius;
 uniform float systemSize;
 const float width = resolution.x;
 const float height = resolution.y;
+
+float rand(vec2 co){
+    return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453);
+}
+
 void main()	{
     // get current particle properties
     vec2 cCoords = gl_FragCoord.xy / resolution.xy;
@@ -44,13 +51,14 @@ void main()	{
             neighborDirection += pDirection;
         }
     }
-    gl_FragColor = normalize(neighborDirection); // TODO: add random direction
+    float angle = 2.0 * PI * rand(cPosition.xy);
+    vec4 randDirection = vec4(cos(angle), sin(angle), 0, 0);
+    gl_FragColor = normalize(neighborDirection) + noiseStrength * randDirection;
 }
 </script>
 
 <script type="x-shader/x-fragment" id="computePosition">
-uniform float maximumVelocity;
-uniform float speedExponent;
+uniform float velocity;
 uniform float systemSize;
 void main() {
     // get current particle properties
@@ -59,11 +67,9 @@ void main() {
     vec4 cPosition = texture2D(texturePosition, cCoords);
     vec4 cDirection = texture2D(textureDirection, cCoords);
     // integrate position
-    vec4 newPosition = cPosition + cDirection * maximumVelocity; // TODO: add variable speed
+    vec4 newPosition = cPosition + cDirection * velocity;
     // apply periodic boundary conditions
-    newPosition = mod(newPosition + systemSize, 2.0 * systemSize) - systemSize;
-    // output new position
-    gl_FragColor = newPosition;
+    gl_FragColor = mod(newPosition + systemSize, 2.0 * systemSize) - systemSize;
 }
 </script>
 
@@ -87,7 +93,7 @@ void main() {
 
 <script>
 
-    var N = 64;
+    var N = 128;
 
     var stats;
     var camera, scene, renderer, controls;
@@ -96,10 +102,9 @@ void main() {
     var directionVariable;
     var particleUniforms;
     var parameters = {
-        noiseStrength: 1,
+        noiseStrength: 0.6,
         interactionRadius: 2,
-        maximumVelocity: 0.1,
-        speedExponent: 6,
+        velocity: 0.2,
         systemSize: 50
     };
 
@@ -116,8 +121,7 @@ void main() {
         container.appendChild(renderer.domElement);
         // create camera and orbit controls
         camera = new THREE.PerspectiveCamera(75, 1, 5, 15000);
-        camera.position.y = 120;
-        camera.position.z = 400;
+        camera.position.z = 100;
         controls = new THREE.OrbitControls(camera, renderer.domElement);
         // create scene
         scene = new THREE.Scene();
@@ -150,6 +154,17 @@ void main() {
         if (error !== null) {
             console.error(error);
         }
+    }
+
+    function restartSimulation() {
+        var positionTexture = gpuCompute.createTexture();
+        var directionTexture = gpuCompute.createTexture();
+        fillTexture(positionTexture, 2, parameters.systemSize, false);
+        fillTexture(directionTexture, 2, 1, true);
+        gpuCompute.renderTexture(positionTexture, positionVariable.renderTargets[0]);
+        gpuCompute.renderTexture(positionTexture, positionVariable.renderTargets[1]);
+        gpuCompute.renderTexture(directionTexture, directionVariable.renderTargets[0]);
+        gpuCompute.renderTexture(directionTexture, directionVariable.renderTargets[1]);
     }
 
     function initializeGeometry() {
@@ -221,8 +236,7 @@ void main() {
 
     function updateUniforms() {
         var positionUniforms = positionVariable.material.uniforms;
-        setParameter(parameters, positionUniforms, "maximumVelocity");
-        setParameter(parameters, positionUniforms, "speedExponent");
+        setParameter(parameters, positionUniforms, "velocity");
         setParameter(parameters, positionUniforms, "systemSize");
         var directionUniforms = directionVariable.material.uniforms;
         setParameter(parameters, directionUniforms, "noiseStrength");
@@ -233,12 +247,17 @@ void main() {
     function initializeParameterGUI() {
         var gui = new dat.GUI();
         var simFolder = gui.addFolder("Simulation parameters");
-        simFolder.add(parameters, "noiseStrength", 0, 1.0, 0.05).onChange(updateUniforms);
+        simFolder.add(parameters, "noiseStrength", 0, 10.0, 0.05).onChange(updateUniforms);
         simFolder.add(parameters, "interactionRadius", 0, 10.0, 0.1).onChange(updateUniforms);
-        simFolder.add(parameters, "maximumVelocity", 0.01, 1.0, 0.01).onChange(updateUniforms);
-        simFolder.add(parameters, "speedExponent", 0, 10.0, 1).onChange(updateUniforms);
+        simFolder.add(parameters, "velocity", 0.01, 1.0, 0.01).onChange(updateUniforms);
         simFolder.add(parameters, "systemSize", 10, 1000, 1).onChange(updateUniforms);
         simFolder.open();
+        var buttonRestart = {
+            restartSimulation: function() {
+                restartSimulation();
+            }
+        };
+        simFolder.add( buttonRestart, "restartSimulation" );
     }
 
     function render() {
