@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ising model</title>
+    <style type="text/css">
+        body {
+            margin: 0;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        #chart {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="chart" width="400" height="100"></canvas>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/GPUComputationRenderer.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script src="lib/stats.min.js"></script>
+<script src="lib/dat.gui.min.js"></script>
+<script src="lib/smoothie.js"></script>
+
+<script type="x-shader/x-fragment" id="computeSpinFlipSweep">
+uniform float time;
+uniform float temperature;
+uniform float offset;
+
+float rand(vec2 co){
+    return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453);
+}
+
+void main()	{
+    // get current particle properties
+    vec2 coords = gl_FragCoord.xy / resolution.xy;
+    float id = gl_FragCoord.y * resolution.x + gl_FragCoord.x;
+    float spin = texture2D(textureSpin, coords).x;
+    float neighbors = 0.0;
+    neighbors += texture2D(textureSpin, coords - vec2(1.0/resolution.x, 0.0)).x;
+    neighbors += texture2D(textureSpin, coords + vec2(1.0/resolution.x, 0.0)).x;
+    neighbors += texture2D(textureSpin, coords - vec2(0.0, 1.0/resolution.y)).x;
+    neighbors += texture2D(textureSpin, coords + vec2(0.0, 1.0/resolution.y)).x;
+    float energyDelta = spin * neighbors;
+    float color = mod(gl_FragCoord.x + gl_FragCoord.y, 2.0);
+    float multiplier = (color == offset && (energyDelta <= 0.0 || rand(vec2(id, time)) < exp(-2.0 / temperature * energyDelta))) ? -1.0 : 1.0;
+    gl_FragColor = vec4(multiplier * spin);
+}
+</script>
+
+<script type="x-shader/x-vertex" id="renderVS">
+varying vec2 coords;
+void main() {
+    coords = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+</script>
+
+<script type="x-shader/x-fragment" id="renderFS">
+uniform sampler2D textureSpin;
+varying vec2 coords;
+void main() {
+    gl_FragColor = texture2D(textureSpin, coords);
+}
+</script>
+
+<script>
+
+    var stats, chart, magnetizationSeries;
+    var camera, scene, renderer, controls;
+    var gpuCompute;
+    var spinVariable;
+    var renderUniforms;
+    var parameters = {
+        time: 0,
+        temperature: 1.8,
+        width: 256
+    };
+
+    function initialize() {
+        // append container
+        var container = document.createElement("div");
+        document.body.appendChild(container);
+        // append stats graph
+        stats = new Stats();
+        container.appendChild(stats.dom);
+        // append renderer
+        renderer = new THREE.WebGLRenderer();
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+        // create camera and orbit controls
+        camera = new THREE.PerspectiveCamera(75, 1, 5, 15000);
+        camera.position.z = 100;
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        // handle resizing
+        windowResize();
+        window.addEventListener("resize", windowResize, false);
+        // initialize
+        initializeParameterGUI();
+        initializeGraph();
+        initializeGeometry();
+        initializeSimulation();
+    }
+
+    function initializeSimulation() {
+        initializeCompute(parameters.width);
+        updateUniforms();
+    }
+
+    function getShader(id) {
+        return document.getElementById(id).textContent;
+    }
+
+    function initializeCompute(size) {
+        gpuCompute = new GPUComputationRenderer(size, size, renderer);
+        var textures = initializeTextures();
+        spinVariable = gpuCompute.addVariable("textureSpin", getShader("computeSpinFlipSweep"), textures.spin);
+        gpuCompute.setVariableDependencies(spinVariable, [spinVariable]);
+        spinVariable.material.uniforms.offset = { value: 0 };
+        spinVariable.material.uniforms.time = { value: 0 };
+        updateUniforms();
+        var error = gpuCompute.init();
+        if (error !== null) {
+            console.error(error);
+        }
+    }
+
+    function initializeTextures() {
+        var textures = {
+            spin: gpuCompute.createTexture()
+        };
+        fillTexture(textures.spin);
+        return textures;
+    }
+
+
+    function fillTexture(texture) {
+        var data = texture.image.data;
+        var rand = [0, 0, 0, 0];
+        for (var i = 0; i < data.length; i += 4) {
+            rand[0] = Math.random() > 0.5 ? 1 : -1;
+            // copy vector to texture data
+            for (j = 0; j < 4; j++) data[i+j] = rand[j];
+        }
+    }
+
+    function restartSimulation() {
+        var textures = initializeTextures();
+        gpuCompute.renderTexture(textures.spin, spinVariable.renderTargets[0]);
+        gpuCompute.renderTexture(textures.spin, spinVariable.renderTargets[1]);
+    }
+
+    function initializeGeometry() {
+        var geometry = new THREE.PlaneGeometry(100, 100, 1, 1);
+        renderUniforms = {
+            textureSpin: { value: null }
+        };
+        var material = new THREE.ShaderMaterial({
+            uniforms: renderUniforms,
+            vertexShader: getShader("renderVS"),
+            fragmentShader: getShader("renderFS")
+        });
+        material.extensions.drawBuffers = true;
+        var plane = new THREE.Mesh(geometry, material);
+        plane.matrixAutoUpdate = false;
+        plane.updateMatrix();
+        // create new scene which contains only the plane
+        scene = new THREE.Scene();
+        scene.add(plane);
+    }
+
+    function windowResize() {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+    }
+
+    function setParameter(parameters, uniforms, name) {
+        if (!uniforms[name]) uniforms[name] = {};
+        uniforms[name].value = parameters[name];
+    }
+
+    function updateUniforms() {
+        var uniforms = spinVariable.material.uniforms;
+        setParameter(parameters, uniforms, "temperature");
+    }
+
+    function initializeParameterGUI() {
+        var gui = new dat.GUI();
+        var simFolder = gui.addFolder("Simulation parameters");
+        simFolder.add(parameters, "temperature", 0, 3).onChange(updateUniforms);
+        simFolder.add(parameters, "width", [32, 64, 128, 256, 512, 1024, 2048, 4096]).onChange(function() {
+            parameters.width = parseInt(parameters.width);
+            initializeSimulation();
+        });
+        var buttonRestart = {
+            restartSimulation: function() {
+                restartSimulation();
+            }
+        };
+        simFolder.add(buttonRestart, "restartSimulation");
+        simFolder.open();
+    }
+
+    function render() {
+        spinVariable.material.uniforms.offset.value = 0;
+        gpuCompute.compute();
+        spinVariable.material.uniforms.offset.value = 1;
+        gpuCompute.compute();
+        renderUniforms.textureSpin.value = gpuCompute.getCurrentRenderTarget(spinVariable).texture;
+        renderer.render(scene, camera);
+        stats.update();
+        spinVariable.material.uniforms.time.value = performance.now();
+        updateObservables();
+        requestAnimationFrame(render);
+    }
+
+    function updateObservables() {
+        var n = parameters.width*parameters.width;
+        var data = new Float32Array(n*4);
+        renderer.readRenderTargetPixels(gpuCompute.getCurrentRenderTarget(spinVariable), 0, 0, parameters.width, parameters.width, data);
+        var magnetization = 0;
+        for (var i = 0; i < data.length; i += 4) {
+            magnetization += data[i];
+        }
+        magnetizationSeries.append(new Date().getTime(), Math.abs(magnetization) / n);
+    }
+
+    function initializeGraph() {
+        magnetizationSeries = new TimeSeries();
+        chart = new SmoothieChart({ grid: { fillstyle: "transparent", strokeStyle: "transparent" }, minValue: 0, maxValue: 1});
+        chart.addTimeSeries(magnetizationSeries, { strokeStyle: "rgba(0, 255, 0, 1)", fillStyle: "rgba(0, 255, 0, 0.2)", lineWidth: 4 });
+        chart.streamTo(document.getElementById("chart"), 500);
+    }
+
+    initialize();
+    render();
+
+</script>
+</body>
+</html>

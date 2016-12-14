@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vicsek model</title>
+    <style type="text/css">
+        body {
+            margin: 0;
+            overflow: hidden;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/GPUComputationRenderer.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script src="lib/stats.min.js"></script>
+<script src="lib/dat.gui.min.js"></script>
+
+<script type="x-shader/x-fragment" id="computeDirection">
+#define PI 3.1415926535897932384626433832795
+
+uniform float noiseStrength;
+uniform float interactionRadius;
+uniform float systemSize;
+const float width = resolution.x;
+const float height = resolution.y;
+
+float rand(vec2 co){
+    return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453);
+}
+
+void main()	{
+    // get current particle properties
+    vec2 cCoords = gl_FragCoord.xy / resolution.xy;
+    vec4 cPosition = texture2D(texturePosition, cCoords);
+    vec4 cDirection = texture2D(textureDirection, cCoords);
+
+    float neighborCount = 0.0;
+    vec4 neighborDirection = vec4(0.0);
+    for (float y = 0.0; y < height; y++) {
+        for (float x = 0.0; x < width; x++) {
+            // get neighbor particle properties
+            vec2 pCoords = vec2(x + 0.5, y + 0.5) / resolution.xy;
+            vec4 pPosition = texture2D(texturePosition, pCoords);
+            vec4 pDirection = texture2D(textureDirection, pCoords);
+            vec4 dPos = pPosition - cPosition;
+            // periodic boundary conditions are disregarded here
+            if (length(dPos) < interactionRadius) {
+                neighborDirection += pDirection;
+                neighborCount++;
+            }
+        }
+    }
+    // add random direction
+    float angle = 2.0 * PI * rand(cPosition.xy);
+    vec4 randDirection = vec4(cos(angle), sin(angle), 0, 0);
+    gl_FragColor = normalize(neighborDirection + neighborCount * noiseStrength * randDirection);
+}
+</script>
+
+<script type="x-shader/x-fragment" id="computePosition">
+uniform float velocity;
+uniform float systemSize;
+void main() {
+    // get current particle properties
+    vec2 cCoords = gl_FragCoord.xy / resolution.xy;
+    float cId = cCoords.y * resolution.x + cCoords.x;
+    vec4 cPosition = texture2D(texturePosition, cCoords);
+    vec4 cDirection = texture2D(textureDirection, cCoords);
+    // integrate position
+    vec4 newPosition = cPosition + cDirection * velocity;
+    // apply periodic boundary conditions
+    gl_FragColor = mod(newPosition + systemSize, 2.0 * systemSize) - systemSize;
+}
+</script>
+
+<script type="x-shader/x-vertex" id="renderVS">
+uniform sampler2D texturePosition;
+void main() {
+    vec3 pos = texture2D(texturePosition, uv).xyz;
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    gl_PointSize = - 1000.0 / mvPosition.z;
+    gl_Position = projectionMatrix * mvPosition;
+}
+</script>
+
+<script type="x-shader/x-fragment" id="renderFS">
+void main() {
+    // draw round particles
+    float len = length(gl_PointCoord - vec2(0.5, 0.5));
+    if (len > 0.5) discard;
+    gl_FragColor = vec4(1.0);
+}
+</script>
+
+<script>
+
+    var stats;
+    var camera, scene, renderer, controls;
+    var gpuCompute;
+    var positionVariable;
+    var directionVariable;
+    var particleUniforms;
+    var parameters = {
+        noiseStrength: 0.5,
+        interactionRadius: 2,
+        velocity: 0.2,
+        systemSize: 50,
+        width: 64
+    };
+
+    function initialize() {
+        // append container
+        var container = document.createElement("div");
+        document.body.appendChild(container);
+        // append stats graph
+        stats = new Stats();
+        container.appendChild(stats.dom);
+        // append renderer
+        renderer = new THREE.WebGLRenderer();
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+        // create camera and orbit controls
+        camera = new THREE.PerspectiveCamera(75, 1, 5, 15000);
+        camera.position.z = 100;
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        // handle resizing
+        windowResize();
+        window.addEventListener("resize", windowResize, false);
+        // initialize
+        initializeParameterGUI();
+        initializeSimulation();
+    }
+
+    function initializeSimulation() {
+        initializeCompute(parameters.width);
+        initializeGeometry(parameters.width);
+        updateUniforms();
+    }
+
+    function getShader(id) {
+        return document.getElementById(id).textContent;
+    }
+
+    function initializeCompute(size) {
+        gpuCompute = new GPUComputationRenderer(size, size, renderer);
+        var textures = initializeTextures();
+        positionVariable = gpuCompute.addVariable("texturePosition", getShader("computePosition"), textures.position);
+        directionVariable = gpuCompute.addVariable("textureDirection", getShader("computeDirection"), textures.direction);
+        gpuCompute.setVariableDependencies(positionVariable, [positionVariable, directionVariable]);
+        gpuCompute.setVariableDependencies(directionVariable, [positionVariable, directionVariable]);
+        updateUniforms();
+        var error = gpuCompute.init();
+        if (error !== null) {
+            console.error(error);
+        }
+    }
+
+    function initializeTextures() {
+        var textures = {
+            position: gpuCompute.createTexture(),
+            direction: gpuCompute.createTexture()
+        };
+        fillTexture(textures.position, 2, parameters.systemSize, false);
+        fillTexture(textures.direction, 2, 1, true);
+        return textures;
+    }
+
+
+    function restartSimulation() {
+        var textures = initializeTextures();
+        gpuCompute.renderTexture(textures.position, positionVariable.renderTargets[0]);
+        gpuCompute.renderTexture(textures.position, positionVariable.renderTargets[1]);
+        gpuCompute.renderTexture(textures.direction, directionVariable.renderTargets[0]);
+        gpuCompute.renderTexture(textures.direction, directionVariable.renderTargets[1]);
+    }
+
+    function initializeGeometry(size) {
+        // We don't actually need any real geometry, we just need something to render.
+        // The positions don't matter as they are read from the texture,
+        // but the number of vertices should match the number texels in the texture.
+        // The uvs are normalized coordinates which are used to read the real positions
+        // from a texture in the vertex shader.
+        var positions = new Float32Array(size*size*3);
+        var uvs = new Float32Array(size*size*2);
+        var p = 0;
+        for (var j = 0; j < size; j++) {
+            for (var i = 0; i < size; i++) {
+                uvs[p++] = i / (size-1);
+                uvs[p++] = j / (size-1);
+            }
+        }
+        var geometry = new THREE.BufferGeometry();
+        geometry.addAttribute("position", new THREE.BufferAttribute(positions, 3));
+        geometry.addAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+        particleUniforms = {
+            texturePosition: { value: null },
+            textureDirection: { value: null }
+        };
+        var material = new THREE.ShaderMaterial({
+            uniforms: particleUniforms,
+            vertexShader: getShader("renderVS"),
+            fragmentShader: getShader("renderFS")
+        });
+        material.extensions.drawBuffers = true;
+        var particles = new THREE.Points(geometry, material);
+        particles.matrixAutoUpdate = false;
+        particles.updateMatrix();
+        // create new scene which contains only the particles
+        scene = new THREE.Scene();
+        scene.add(particles);
+    }
+
+    function fillTexture(texture, dimension, range, normalize) {
+        var data = texture.image.data;
+        var rand = [0, 0, 0, 0];
+        var i, j;
+        for (i = 0; i < data.length; i += 4 ) {
+            // generate random vector of given dimension
+            for (j = 0; j < dimension; j++){
+                rand[j] = (Math.random() * 2 - 1) * range;
+            }
+            // normalize vector to unit length
+            if (normalize) {
+                var len = 0;
+                for (j = 0; j < dimension; j++) len += rand[j]*rand[j];
+                len = Math.sqrt(len);
+                for (j = 0; j < dimension; j++) rand[j] /= len;
+            }
+            // copy vector to texture data
+            for (j = 0; j < 4; j++) data[i+j] = rand[j];
+        }
+    }
+
+    function windowResize() {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+    }
+
+    function setParameter(parameters, uniforms, name) {
+        if (!uniforms[name]) uniforms[name] = {};
+        uniforms[name].value = parameters[name];
+    }
+
+    function updateUniforms() {
+        var positionUniforms = positionVariable.material.uniforms;
+        setParameter(parameters, positionUniforms, "velocity");
+        setParameter(parameters, positionUniforms, "systemSize");
+        var directionUniforms = directionVariable.material.uniforms;
+        setParameter(parameters, directionUniforms, "noiseStrength");
+        setParameter(parameters, directionUniforms, "interactionRadius");
+        setParameter(parameters, directionUniforms, "systemSize");
+    }
+
+    function initializeParameterGUI() {
+        var gui = new dat.GUI();
+        var simFolder = gui.addFolder("Simulation parameters");
+        simFolder.add(parameters, "noiseStrength", 0, 1).onChange(updateUniforms);
+        simFolder.add(parameters, "interactionRadius", 0.1, 10).onChange(updateUniforms);
+        simFolder.add(parameters, "velocity", 0.01, 1).onChange(updateUniforms);
+        simFolder.add(parameters, "systemSize", 10, 200).onChange(updateUniforms);
+        var tmp = { particles: parameters.width*parameters.width };
+        var textureWidths = [16, 32, 64, 128, 256];
+        simFolder.add(tmp, "particles", textureWidths.map(function(w) { return w*w; })).onChange(function() {
+            parameters.width = Math.sqrt(tmp.particles);
+            initializeSimulation();
+        });
+        var buttonRestart = {
+            restartSimulation: function() {
+                restartSimulation();
+            }
+        };
+        simFolder.add(buttonRestart, "restartSimulation");
+        simFolder.open();
+    }
+
+    function render() {
+        gpuCompute.compute();
+        particleUniforms.texturePosition.value = gpuCompute.getCurrentRenderTarget(positionVariable).texture;
+        particleUniforms.textureDirection.value = gpuCompute.getCurrentRenderTarget(directionVariable).texture;
+        renderer.render(scene, camera);
+        stats.update();
+        requestAnimationFrame(render);
+    }
+
+    initialize();
+    render();
+
+</script>
+</body>
+</html>
