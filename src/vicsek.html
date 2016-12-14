@@ -8,16 +8,29 @@
             margin: 0;
             overflow: hidden;
             cursor: pointer;
+            color: white;
+        }
+
+        #chartContainer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
         }
     </style>
 </head>
 <body>
+
+<div id="chartContainer">
+    <div>Global polarization order</div>
+    <canvas id="chart" width="400" height="100"></canvas>
+</div>
 
 <script src="lib/three.min.js"></script>
 <script src="lib/GPUComputationRenderer.js"></script>
 <script src="lib/OrbitControls.js"></script>
 <script src="lib/stats.min.js"></script>
 <script src="lib/dat.gui.min.js"></script>
+<script src="lib/smoothie.js"></script>
 
 <script type="x-shader/x-fragment" id="computeDirection">
 #define PI 3.1415926535897932384626433832795
@@ -98,7 +111,7 @@ void main() {
 
 <script>
 
-    var stats;
+    var stats, chart, polarizationSeries;
     var camera, scene, renderer, controls;
     var gpuCompute;
     var positionVariable;
@@ -132,6 +145,7 @@ void main() {
         window.addEventListener("resize", windowResize, false);
         // initialize
         initializeParameterGUI();
+        initializeGraph();
         initializeSimulation();
     }
 
@@ -284,7 +298,33 @@ void main() {
         particleUniforms.textureDirection.value = gpuCompute.getCurrentRenderTarget(directionVariable).texture;
         renderer.render(scene, camera);
         stats.update();
+        updateObservables();
         requestAnimationFrame(render);
+    }
+
+    function updateObservables() {
+        var w = parameters.width;
+        var n = w*w;
+        var data = new Float32Array(n*4);
+        renderer.readRenderTargetPixels(gpuCompute.getCurrentRenderTarget(directionVariable), 0, 0, w, w, data);
+        var sum = [0, 0, 0, 0];
+        for (var i = 0; i < data.length; i += 4) {
+            sum[0] += data[i];
+            sum[1] += data[i+1];
+            sum[2] += data[i+2];
+            sum[3] += data[i+3];
+        }
+        var len = 0;
+        for (j = 0; j < 4; j++) len += sum[j]*sum[j];
+        len = Math.sqrt(len);
+        polarizationSeries.append(new Date().getTime(), len / n);
+    }
+
+    function initializeGraph() {
+        polarizationSeries = new TimeSeries();
+        chart = new SmoothieChart({ grid: { fillstyle: "transparent", strokeStyle: "transparent" }, minValue: 0, maxValue: 1});
+        chart.addTimeSeries(polarizationSeries, { strokeStyle: "rgba(0, 255, 0, 1)", fillStyle: "rgba(0, 255, 0, 0.2)", lineWidth: 4 });
+        chart.streamTo(document.getElementById("chart"), 500);
     }
 
     initialize();
