@@ -126,6 +126,8 @@ void main() {
         var textures = initializeTextures();
         spinVariable = gpuCompute.addVariable("textureSpin", getShader("computeSpinFlipSweep"), textures.spin);
         gpuCompute.setVariableDependencies(spinVariable, [spinVariable]);
+        spinVariable.wrapS = THREE.RepeatWrapping;
+        spinVariable.wrapT = THREE.RepeatWrapping;
         spinVariable.material.uniforms.offset = { value: 0 };
         spinVariable.material.uniforms.time = { value: 0 };
         updateUniforms();
