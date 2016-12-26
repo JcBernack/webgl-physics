@@ -22,7 +22,7 @@
 
 <script type="x-shader/x-vertex" id="renderVS">
 void main() {
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_Position = vec4(position, 1.0);
 }
 </script>
 
@@ -32,9 +32,8 @@ uniform float centerY;
 uniform float width;
 uniform float height;
 uniform float size;
-uniform float cutoff;
 
-const float maxIterations = 20.0;
+const float maxIterations = 100.0;
 
 vec2 mandelbrot(vec2 c) {
     vec2 z = c;
@@ -44,7 +43,7 @@ vec2 mandelbrot(vec2 c) {
         z.y = (2.0 * z.x * z.y) + c.y;
         z.x = x;
         float len = z.x * z.x + z.y * z.y;
-        if (len > cutoff) {
+        if (len > 4.0) {
             return vec2(float(i), len);
         }
     }
@@ -70,8 +69,7 @@ void main() {
     var parameters = {
         centerX: 0,
         centerY: 0,
-        size: 3,
-        cutoff: 100
+        size: 3
     };
 
     function initialize() {
@@ -82,7 +80,6 @@ void main() {
         canvas = document.getElementById("canvas");
         renderer = new THREE.WebGLRenderer({ canvas: canvas });
         // create camera, most arguments are meaningless as the projection and modelview matrix are not used anyway
-//        camera = new THREE.PerspectiveCamera(45, 1, 1, 3);
         camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3);
         camera.position.z = 2;
         // initialize
@@ -99,21 +96,25 @@ void main() {
         canvas.addEventListener("wheel", mouseWheel);
     }
 
+    var lastMoveEvent = null;
     function mouseMove(e) {
-        if (e.buttons != 1) return;
-        parameters.centerX -= e.movementX / canvas.width * parameters.size;
-        parameters.centerY += e.movementY / canvas.height * parameters.size;
-        setUniform("centerX", parameters.centerX);
-        setUniform("centerY", parameters.centerY);
-        requestAnimationFrame(render);
+        if (lastMoveEvent != null && e.buttons == 1) {
+            var size = material.uniforms.size.value;
+            var centerX = material.uniforms.centerX;
+            var centerY = material.uniforms.centerY;
+            centerX.value -= (e.screenX - lastMoveEvent.screenX) / canvas.width * size;
+            centerY.value += (e.screenY - lastMoveEvent.screenY) / canvas.height * size;
+            requestRender();
+        }
+        lastMoveEvent = e;
     }
 
     function mouseWheel(e) {
         var factor = 0.1;
-        if (e.wheelDelta > 0) parameters.size *= 1 - factor;
-        if (e.wheelDelta < 0) parameters.size *= 1 + factor;
-        setUniform("size", parameters.size);
-        requestAnimationFrame(render);
+        var size = material.uniforms.size;
+        if (e.wheelDelta > 0) size.value *= 1 - factor;
+        if (e.wheelDelta < 0) size.value *= 1 + factor;
+        requestRender();
     }
 
     function getShader(id) {
@@ -128,7 +129,8 @@ void main() {
             depthWrite: false,
             uniforms: {
                 centerX: { value: 0 },
-                centerY: { value: 0 }
+                centerY: { value: 0 },
+                size: { value: 3 }
             }
         });
         scene = new THREE.Scene();
@@ -141,7 +143,7 @@ void main() {
         renderer.setSize(w, h);
         setUniform("width", w);
         setUniform("height", h);
-        requestAnimationFrame(render);
+        requestRender();
     }
 
     function setUniform(name, value) {
@@ -153,24 +155,30 @@ void main() {
     function addParameter(folder, name, min, max){
         var update = function () {
             setUniform(name, parameters[name]);
-            requestAnimationFrame(render);
+            requestRender();
         };
         folder.add(parameters, name, min, max).onChange(update);
         update();
     }
 
     function initializeParameterGUI() {
-        var gui = new dat.GUI();
-        var folder = gui.addFolder("Mandelbrot parameters");
-        addParameter(folder, "size", 0);
-        addParameter(folder, "cutoff");
-        folder.open();
+//        var gui = new dat.GUI();
+//        var folder = gui.addFolder("Mandelbrot parameters");
+//        addParameter(folder, "cutoff");
+//        folder.open();
+    }
+
+    var rendering = false;
+    function requestRender() {
+        if (rendering) return;
+        rendering = true;
+        requestAnimationFrame(render);
     }
 
     function render() {
+        rendering = false;
         renderer.render(scene, camera);
         stats.update();
-//        requestAnimationFrame(render);
     }
 
     initialize();
