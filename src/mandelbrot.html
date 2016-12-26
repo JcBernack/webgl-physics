@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mandelbrot</title>
+    <style type="text/css">
+        body {
+            margin: 0;
+            overflow: hidden;
+            cursor: pointer;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/stats.min.js"></script>
+<script src="lib/dat.gui.min.js"></script>
+
+<script type="x-shader/x-vertex" id="renderVS">
+void main() {
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+</script>
+
+<script type="x-shader/x-fragment" id="renderFS">
+uniform float centerX;
+uniform float centerY;
+uniform float width;
+uniform float height;
+uniform float size;
+uniform float cutoff;
+
+const float maxIterations = 20.0;
+
+vec2 mandelbrot(vec2 c) {
+    vec2 z = c;
+    for (float i = 0.0; i < maxIterations; i++) {
+        // Z(i+1) = Z(i)^2 + C
+        float x = (z.x * z.x - z.y * z.y) + c.x;
+        z.y = (2.0 * z.x * z.y) + c.y;
+        z.x = x;
+        float len = z.x * z.x + z.y * z.y;
+        if (len > cutoff) {
+            return vec2(float(i), len);
+        }
+    }
+    return vec2(maxIterations, 0.0);
+}
+
+void main() {
+    vec2 window = vec2(width, height);
+    vec2 center = vec2(centerX, centerY);
+    vec2 pos = (gl_FragCoord.xy / window - 0.5 + center) * size;
+    vec2 m = mandelbrot(pos);
+    gl_FragColor = vec4(m.x/maxIterations);
+}
+</script>
+
+<script>
+
+    var stats;
+    var camera, scene, renderer;
+    var material;
+    var parameters = {
+        centerX: -0.15,
+        centerY: 0,
+        size: 4,
+        cutoff: 100
+    };
+
+    function initialize() {
+        // append container
+        var container = document.createElement("div");
+        document.body.appendChild(container);
+        // append stats graph
+        stats = new Stats();
+        container.appendChild(stats.dom);
+        // append renderer
+        renderer = new THREE.WebGLRenderer();
+        container.appendChild(renderer.domElement);
+        // create camera, most arguments are meaningless as the projection and modelview matrix are not used anyway
+        camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3);
+//        camera = new THREE.PerspectiveCamera(45, 1, 1, 3);
+        camera.position.z = 2;
+        // initialize
+        initializeScene();
+        initializeParameterGUI();
+        // handle resizing
+        windowResize();
+        window.addEventListener("resize", windowResize, false);
+    }
+
+    function getShader(id) {
+        return document.getElementById(id).textContent;
+    }
+
+    function initializeScene() {
+        material = new THREE.ShaderMaterial({
+            vertexShader: getShader("renderVS"),
+            fragmentShader: getShader("renderFS"),
+            depthTest: false,
+            depthWrite: false
+        });
+        scene = new THREE.Scene();
+        scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+    }
+
+    function windowResize() {
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        renderer.setSize(w, h);
+        setUniform("width", w);
+        setUniform("height", h);
+    }
+
+    function setUniform(name, value) {
+        var uniforms = material.uniforms;
+        if (!uniforms[name]) uniforms[name] = {};
+        uniforms[name].value = value;
+    }
+
+    function addParameter(folder, name, min, max){
+        var update = function () {
+            setUniform(name, parameters[name]);
+        };
+        folder.add(parameters, name, min, max).onChange(update);
+        update();
+    }
+
+    function initializeParameterGUI() {
+        var gui = new dat.GUI();
+        var folder = gui.addFolder("Mandelbrot parameters");
+        addParameter(folder, "size", 0);
+        addParameter(folder, "centerX", -1, 1);
+        addParameter(folder, "centerY", -1, 1);
+        addParameter(folder, "cutoff");
+        folder.open();
+    }
+
+    function render() {
+        renderer.render(scene, camera);
+        stats.update();
+        requestAnimationFrame(render);
+    }
+
+    initialize();
+    render();
+
+</script>
+</body>
+</html>
