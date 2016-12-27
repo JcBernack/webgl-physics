@@ -27,24 +27,51 @@ void main() {
 </script>
 
 <script type="x-shader/x-fragment" id="renderFS">
-uniform float centerX;
-uniform float centerY;
+uniform vec2 centerX;
+uniform vec2 centerY;
 uniform float width;
 uniform float height;
 uniform float size;
+uniform bool useDoubleEmulation;
 
-const float maxIterations = 100.0;
+const float maxIterations = 400.0;
 
-vec2 mandelbrot(vec2 c) {
-    vec2 z = c;
+// each vector stores a high and a low part for double emulation
+vec2 mul(vec2 a, vec2 b) {
+    vec2 c = vec2(a.x*b.x, a.y*b.y);
+    // correction term
+    c.y += a.x*b.y + b.x*a.y;
+	return c;
+}
+
+// complex numbers with double emulation are stored this way:
+// vec4(Re_hi, Re_lo, Im_hi, Im_lo)
+vec4 complexMul(vec4 a, vec4 b) {
+    return vec4(
+        mul(a.xy, b.xy) - mul(a.zw, b.zw),
+        mul(a.xy, b.zw) + mul(b.xy, a.zw)
+    );
+}
+
+vec2 complexLen2(vec4 a) {
+    return mul(a.xy, a.xy) + mul(a.zw, a.zw);
+}
+
+vec2 mandelbrot(vec2 pos) {
+    vec4 pan = vec4(centerX, centerY);
+    vec4 z = vec4(0.0);
+    vec4 c = vec4(0.0);
+    if (useDoubleEmulation) {
+        c.yw = pos;
+    } else {
+        c.xz = pos;
+    }
     for (float i = 0.0; i < maxIterations; i++) {
         // Z(i+1) = Z(i)^2 + C
-        float x = (z.x * z.x - z.y * z.y) + c.x;
-        z.y = (2.0 * z.x * z.y) + c.y;
-        z.x = x;
-        float len = z.x * z.x + z.y * z.y;
-        if (len > 4.0) {
-            return vec2(float(i), len);
+        z = complexMul(z, z) + c + pan;
+        vec2 len = complexLen2(z);
+        if (len.x + len.y > 4.0) {
+            return vec2(i, len.x);
         }
     }
     return vec2(maxIterations, 0.0);
@@ -52,11 +79,10 @@ vec2 mandelbrot(vec2 c) {
 
 void main() {
     vec2 window = vec2(width, height);
-    vec2 center = vec2(centerX, centerY);
-    vec2 pos = (gl_FragCoord.xy / window - 0.5) * size * vec2(1.0, height / width) + center;
+    vec2 pos = (gl_FragCoord.xy / window - 0.5) * size * vec2(1.0, height / width);
     vec2 m = mandelbrot(pos);
     gl_FragColor = vec4(m.x/maxIterations);
-//    gl_FragColor = vec4(m.x/maxIterations, m.y/cutoff, 0.0, 1.0);
+//    gl_FragColor = vec4(m.x/maxIterations, m.y/4.0, 0.0, 1.0);
 }
 </script>
 
@@ -65,11 +91,13 @@ void main() {
     var canvas, stats, gui;
     var camera, scene, renderer;
     var material;
+    var guiParameters = {};
 
     var parameters = {
-        centerX: { value: 0, isUniform: true },
-        centerY: { value: 0, isUniform: true },
-        size: { value: 3, isUniform: true }
+        centerX: { value: 0, isUniform: true, isDouble: true },
+        centerY: { value: 0, isUniform: true, isDouble: true },
+        size: { value: 3, isUniform: true },
+        useDoubleEmulation: { value: 1, isUniform: true }
     };
 
     function get(name) {
@@ -80,22 +108,41 @@ void main() {
 
     function set(name, value) {
         window.localStorage.setItem(name, value);
-        if (parameters[name].isUniform) setUniform(name, value);
+        if (parameters[name].isDouble) {
+            value = splitDouble(value);
+            guiParameters[name+"_hi"] = value[0];
+            guiParameters[name+"_lo"] = value[1];
+        } else {
+            guiParameters[name] = value;
+        }
+        if (parameters[name].isUniform) {
+            setUniform(name, value);
+        }
         requestRender();
+        if (gui) {
+            for (var i in gui.__controllers) {
+                gui.__controllers[i].updateDisplay();
+            }
+        }
     }
 
-    function setAllUniforms() {
+    function initParameters() {
         for (var name in parameters) {
-            if (parameters[name].isUniform) {
-                setUniform(name, get(name));
-            }
+            set(name, get(name))
         }
         requestRender();
     }
 
     function reset() {
         window.localStorage.clear();
-        setAllUniforms();
+        initParameters();
+    }
+
+    function splitDouble(input) {
+        var split = new Float32Array(2);
+        split[0] = input;
+        split[1] = input - split[0];
+        return split;
     }
 
     function initialize() {
@@ -107,9 +154,9 @@ void main() {
         renderer = new THREE.WebGLRenderer({ canvas: canvas });
         // initialize
         initializeScene();
+        initParameters();
         initializeParameterGUI();
         addEventHandlers();
-        setAllUniforms();
         // handle resizing
         windowResize();
         window.addEventListener("resize", windowResize, false);
@@ -179,6 +226,11 @@ void main() {
 
     function initializeParameterGUI() {
         gui = new dat.GUI();
+        gui.add(guiParameters, "centerX_hi").step(1e-6);
+        gui.add(guiParameters, "centerX_lo").step(1e-6);
+        gui.add(guiParameters, "centerY_hi").step(1e-6);
+        gui.add(guiParameters, "centerY_lo").step(1e-6);
+        gui.add(guiParameters, "size").step(1e-6);
         gui.add({ reset: reset }, "reset");
     }
 
