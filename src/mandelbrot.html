@@ -36,7 +36,10 @@ uniform bool useDoubleEmulation;
 
 const float maxIterations = 400.0;
 
-vec2 add(vec2 dsa, vec2 dsb) {
+// Emulation based on Fortran-90 double-single package. See http://crd.lbl.gov/~dhbailey/mpdist/
+// Substract: res = ds_add(a, b) => res = a + b
+vec2 ds_add (vec2 dsa, vec2 dsb)
+{
     vec2 dsc;
     float t1, t2, e;
 
@@ -49,11 +52,39 @@ vec2 add(vec2 dsa, vec2 dsb) {
     return dsc;
 }
 
-vec4 add(vec4 a, vec4 b) {
-    return vec4(add(a.xy, b.xy), add(a.zw, b.zw));
+// Substract: res = ds_sub(a, b) => res = a - b
+vec2 ds_sub (vec2 dsa, vec2 dsb)
+{
+    vec2 dsc;
+    float e, t1, t2;
+
+    t1 = dsa.x - dsb.x;
+    e = t1 - dsa.x;
+    t2 = ((-dsb.x - e) + (dsa.x - (t1 - e))) + dsa.y - dsb.y;
+
+    dsc.x = t1 + t2;
+    dsc.y = t2 - (dsc.x - t1);
+    return dsc;
 }
 
-vec2 mul(vec2 dsa, vec2 dsb) {
+// Compare: res = -1 if a < b
+//              = 0 if a == b
+//              = 1 if a > b
+float ds_compare(vec2 dsa, vec2 dsb)
+{
+    if (dsa.x < dsb.x) return -1.;
+    else if (dsa.x == dsb.x)
+    {
+        if (dsa.y < dsb.y) return -1.;
+        else if (dsa.y == dsb.y) return 0.;
+        else return 1.;
+    }
+    else return 1.;
+}
+
+// Multiply: res = ds_mul(a, b) => res = a * b
+vec2 ds_mul (vec2 dsa, vec2 dsb)
+{
     vec2 dsc;
     float c11, c21, c2, e, t1, t2;
     float a1, a2, b1, b2, cona, conb, split = 8193.;
@@ -80,47 +111,62 @@ vec2 mul(vec2 dsa, vec2 dsb) {
     return dsc;
 }
 
-// complex numbers with double emulation are stored this way:
-// vec4(Re_hi, Re_lo, Im_hi, Im_lo)
-vec4 complexMul(vec4 a, vec4 b) {
-    return vec4(
-        add(mul(a.xy, b.xy), -mul(a.zw, b.zw)),
-        add(mul(a.xy, b.zw), mul(b.xy, a.zw))
-    );
+// create double-single number from float
+vec2 ds_set(float a)
+{
+    vec2 z;
+    z.x = a;
+    z.y = 0.0;
+    return z;
 }
 
-vec2 complexLen2(vec4 a) {
-    return add(mul(a.xy, a.xy), mul(a.zw, a.zw));
-}
+float emandel()
+{
+    vec2 e_tx = ds_set(gl_FragCoord.x);
+    vec2 e_ty = ds_set(gl_FragCoord.y);
 
-vec2 mandelbrot(vec2 pos) {
-    vec4 pan = vec4(centerX, centerY);
-    vec4 z = vec4(0.0);
-    vec4 c = vec4(0.0);
-    if (useDoubleEmulation) {
-        c.yw = pos;
-    } else {
-        c.xz = pos;
-    }
-    c += pan;
-    for (float i = 0.0; i < maxIterations; i++) {
-        // Z(i+1) = Z(i)^2 + C
-        z = add(complexMul(z, z), c);
-        vec2 len = complexLen2(z);
-        if (len.x + len.y > 4.0) {
-            return vec2(i, len.x);
+    // compute position in complex plane from current pixel
+    vec2 zoom = ds_set(size);
+    vec2 w = ds_set(width / 2.0 * size);
+    vec2 h = ds_set(height / 2.0 * size);
+    vec2 cx = ds_add(ds_add(centerX, ds_mul(e_tx, zoom)), w);
+    vec2 cy = ds_add(ds_add(centerY, ds_mul(e_ty, zoom)), h);
+
+    vec2 tmp;
+
+    vec2 zx = cx;
+    vec2 zy = cy;
+    vec2 two = ds_set(2.0);
+
+    float radius = 2.0;
+    vec2 e_radius = ds_set(radius*radius);
+
+    for(float n=0.0; n<maxIterations; n++)
+    {
+        tmp = zx;
+        zx = ds_add(ds_sub(ds_mul(zx, zx), ds_mul(zy, zy)), cx);
+        zy = ds_add(ds_mul(ds_mul(zy, tmp), two), cy);
+        if( ds_compare(ds_add(ds_mul(zx, zx), ds_mul(zy, zy)), e_radius)>0.)
+        {
+            return(n + 1. - log(log(length(vec2(zx.x, zy.x))))/log(2.));	// http://linas.org/art-gallery/escape/escape.html
         }
     }
-    return vec2(maxIterations, 0.0);
+    return 0.;
 }
 
-void main() {
-    vec2 window = vec2(width, height);
-    vec2 pos = (gl_FragCoord.xy / window - 0.5) * size * vec2(1.0, height / width);
-    vec2 m = mandelbrot(pos);
-    gl_FragColor = vec4(m.x/maxIterations);
-//    gl_FragColor = vec4(m.x/maxIterations, m.y/4.0, 0.0, 1.0);
+void main()
+{
+    float n = emandel();
+
+//    gl_FragColor = vec4(
+//        (-cos(0.025*n)+1.0)/2.0,
+//        (-cos(0.08*n)+1.0)/2.0,
+//        (-cos(0.12*n)+1.0)/2.0,
+//        1.0);
+
+    gl_FragColor = vec4(n / maxIterations);
 }
+
 </script>
 
 <script>
