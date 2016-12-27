@@ -63,14 +63,41 @@ void main() {
 
 <script>
 
-    var canvas, stats;
+    var canvas, stats, gui;
     var camera, scene, renderer;
     var material;
+
     var parameters = {
-        centerX: 0,
-        centerY: 0,
-        size: 3
+        centerX: { value: 0, isUniform: true },
+        centerY: { value: 0, isUniform: true },
+        size: { value: 3, isUniform: true }
     };
+
+    function get(name) {
+        var value = window.localStorage.getItem(name);
+        if (value == null) return parameters[name].value;
+        return parseFloat(value);
+    }
+
+    function set(name, value) {
+        window.localStorage.setItem(name, value);
+        if (parameters[name].isUniform) setUniform(name, value);
+        requestRender();
+    }
+
+    function setAllUniforms() {
+        for (var name in parameters) {
+            if (parameters[name].isUniform) {
+                setUniform(name, get(name));
+            }
+        }
+        requestRender();
+    }
+
+    function reset() {
+        window.localStorage.clear();
+        setAllUniforms();
+    }
 
     function initialize() {
         // append stats graph
@@ -79,13 +106,11 @@ void main() {
         // initialize renderer
         canvas = document.getElementById("canvas");
         renderer = new THREE.WebGLRenderer({ canvas: canvas });
-        // create camera, most arguments are meaningless as the projection and modelview matrix are not used anyway
-        camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3);
-        camera.position.z = 2;
         // initialize
         initializeScene();
         initializeParameterGUI();
         addEventHandlers();
+        setAllUniforms();
         // handle resizing
         windowResize();
         window.addEventListener("resize", windowResize, false);
@@ -99,22 +124,23 @@ void main() {
     var lastMoveEvent = null;
     function mouseMove(e) {
         if (lastMoveEvent != null && e.buttons == 1) {
-            var size = material.uniforms.size.value;
-            var centerX = material.uniforms.centerX;
-            var centerY = material.uniforms.centerY;
-            centerX.value -= (e.screenX - lastMoveEvent.screenX) / canvas.width * size;
-            centerY.value += (e.screenY - lastMoveEvent.screenY) / canvas.height * size;
-            requestRender();
+            var size = get("size");
+            var centerX = get("centerX");
+            var centerY = get("centerY");
+            centerX -= (e.screenX - lastMoveEvent.screenX) / canvas.width * size;
+            centerY += (e.screenY - lastMoveEvent.screenY) / canvas.height * size;
+            set("centerX", centerX, true);
+            set("centerY", centerY, true);
         }
         lastMoveEvent = e;
     }
 
     function mouseWheel(e) {
         var factor = 0.1;
-        var size = material.uniforms.size;
-        if (e.wheelDelta > 0) size.value *= 1 - factor;
-        if (e.wheelDelta < 0) size.value *= 1 + factor;
-        requestRender();
+        var size = get("size");
+        if (e.wheelDelta > 0) size *= 1 - factor;
+        if (e.wheelDelta < 0) size *= 1 + factor;
+        set("size", size, true);
     }
 
     function getShader(id) {
@@ -122,18 +148,18 @@ void main() {
     }
 
     function initializeScene() {
+        // most arguments are meaningless here as the projection and modelview matrix are not used in the shader
+        camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3);
+        camera.position.z = 2;
+        // create the mandelbrot material
         material = new THREE.ShaderMaterial({
             vertexShader: getShader("renderVS"),
             fragmentShader: getShader("renderFS"),
             depthTest: false,
-            depthWrite: false,
-            uniforms: {
-                centerX: { value: 0 },
-                centerY: { value: 0 },
-                size: { value: 3 }
-            }
+            depthWrite: false
         });
         scene = new THREE.Scene();
+        scene.add(camera);
         scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
     }
 
@@ -152,20 +178,10 @@ void main() {
         uniforms[name].value = value;
     }
 
-    function addParameter(folder, name, min, max){
-        var update = function () {
-            setUniform(name, parameters[name]);
-            requestRender();
-        };
-        folder.add(parameters, name, min, max).onChange(update);
-        update();
-    }
-
     function initializeParameterGUI() {
-//        var gui = new dat.GUI();
-//        var folder = gui.addFolder("Mandelbrot parameters");
-//        addParameter(folder, "cutoff");
-//        folder.open();
+        gui = new dat.GUI();
+        gui.add({ reset: reset }, "reset");
+        gui.close();
     }
 
     var rendering = false;
