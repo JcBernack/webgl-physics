@@ -53,8 +53,7 @@ vec2 mandelbrot(vec2 c) {
 void main() {
     vec2 window = vec2(width, height);
     vec2 center = vec2(centerX, centerY);
-    vec2 pos = (gl_FragCoord.xy / window - 0.5) * size + center;
-    pos.x *= width / height;
+    vec2 pos = (gl_FragCoord.xy / window - 0.5) * size * vec2(1.0, height / width) + center;
     vec2 m = mandelbrot(pos);
     gl_FragColor = vec4(m.x/maxIterations);
 //    gl_FragColor = vec4(m.x/maxIterations, m.y/cutoff, 0.0, 1.0);
@@ -128,7 +127,7 @@ void main() {
             var centerX = get("centerX");
             var centerY = get("centerY");
             centerX -= (e.screenX - lastMoveEvent.screenX) / canvas.width * size;
-            centerY += (e.screenY - lastMoveEvent.screenY) / canvas.height * size;
+            centerY += (e.screenY - lastMoveEvent.screenY) / canvas.width * size;
             set("centerX", centerX, true);
             set("centerY", centerY, true);
         }
@@ -181,7 +180,6 @@ void main() {
     function initializeParameterGUI() {
         gui = new dat.GUI();
         gui.add({ reset: reset }, "reset");
-        gui.close();
     }
 
     var rendering = false;
