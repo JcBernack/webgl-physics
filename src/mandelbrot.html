@@ -36,25 +36,61 @@ uniform bool useDoubleEmulation;
 
 const float maxIterations = 400.0;
 
-// each vector stores a high and a low part for double emulation
-vec2 mul(vec2 a, vec2 b) {
-    vec2 c = vec2(a.x*b.x, a.y*b.y);
-    // correction term
-    c.y += a.x*b.y + b.x*a.y;
-	return c;
+vec2 add(vec2 dsa, vec2 dsb) {
+    vec2 dsc;
+    float t1, t2, e;
+
+    t1 = dsa.x + dsb.x;
+    e = t1 - dsa.x;
+    t2 = ((dsb.x - e) + (dsa.x - (t1 - e))) + dsa.y + dsb.y;
+
+    dsc.x = t1 + t2;
+    dsc.y = t2 - (dsc.x - t1);
+    return dsc;
+}
+
+vec4 add(vec4 a, vec4 b) {
+    return vec4(add(a.xy, b.xy), add(a.zw, b.zw));
+}
+
+vec2 mul(vec2 dsa, vec2 dsb) {
+    vec2 dsc;
+    float c11, c21, c2, e, t1, t2;
+    float a1, a2, b1, b2, cona, conb, split = 8193.;
+
+    cona = dsa.x * split;
+    conb = dsb.x * split;
+    a1 = cona - (cona - dsa.x);
+    b1 = conb - (conb - dsb.x);
+    a2 = dsa.x - a1;
+    b2 = dsb.x - b1;
+
+    c11 = dsa.x * dsb.x;
+    c21 = a2 * b2 + (a2 * b1 + (a1 * b2 + (a1 * b1 - c11)));
+
+    c2 = dsa.x * dsb.y + dsa.y * dsb.x;
+
+    t1 = c11 + c2;
+    e = t1 - c11;
+    t2 = dsa.y * dsb.y + ((c2 - e) + (c11 - (t1 - e))) + c21;
+
+    dsc.x = t1 + t2;
+    dsc.y = t2 - (dsc.x - t1);
+
+    return dsc;
 }
 
 // complex numbers with double emulation are stored this way:
 // vec4(Re_hi, Re_lo, Im_hi, Im_lo)
 vec4 complexMul(vec4 a, vec4 b) {
     return vec4(
-        mul(a.xy, b.xy) - mul(a.zw, b.zw),
-        mul(a.xy, b.zw) + mul(b.xy, a.zw)
+        add(mul(a.xy, b.xy), -mul(a.zw, b.zw)),
+        add(mul(a.xy, b.zw), mul(b.xy, a.zw))
     );
 }
 
 vec2 complexLen2(vec4 a) {
-    return mul(a.xy, a.xy) + mul(a.zw, a.zw);
+    return add(mul(a.xy, a.xy), mul(a.zw, a.zw));
 }
 
 vec2 mandelbrot(vec2 pos) {
@@ -66,9 +102,10 @@ vec2 mandelbrot(vec2 pos) {
     } else {
         c.xz = pos;
     }
+    c += pan;
     for (float i = 0.0; i < maxIterations; i++) {
         // Z(i+1) = Z(i)^2 + C
-        z = complexMul(z, z) + c + pan;
+        z = add(complexMul(z, z), c);
         vec2 len = complexLen2(z);
         if (len.x + len.y > 4.0) {
             return vec2(i, len.x);
