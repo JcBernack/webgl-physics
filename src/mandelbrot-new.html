@@ -49,13 +49,17 @@
             }
         };
 
+        var renderStart = 0;
+
         this.message = function(e) {
-            console.log("received", e);
+            var elapsed = performance.now() - renderStart;
+            console.log("received after", elapsed, e);
             var d = e.data;
             var image = ctx.createImageData(d.width, d.height);
             var k = 0;
             for (var i = 0; i < d.result.length; i++) {
                 var c = d.result[i] / d.iterations * 255;
+                //TODO: add fancy color mapping
                 image.data[k++] = c;
                 image.data[k++] = c;
                 image.data[k++] = c;
@@ -66,6 +70,7 @@
 
         this.render = function() {
             console.log("rendering");
+            renderStart = performance.now();
             ctx.beginPath();
             ctx.moveTo(0,0);
             ctx.lineTo(this.canvas.width, this.canvas.height);
