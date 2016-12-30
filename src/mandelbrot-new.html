@@ -31,12 +31,18 @@
     function Mandelbrot() {
 
         this.canvas = null;
-        this.center = { re: -0.739795, im: 0.288266 };
-        this.zoom = 0.000013;
+        this.center = {
+//            re: -0.7397963083081783,
+//            im: 0.28826751312182947,
+            re:-0.7397549703504344,
+            im: 0.2883886250742989
+        };
+//        this.zoom = 1.149237505160272e-14;
+        this.zoom = 0.00038786765799159173;
 
         var ctx = null;
         var workers = [];
-        var renderStart = 0;
+//        var renderStart = 0;
 
         this.initWorkers = function(count) {
             var i;
@@ -51,7 +57,7 @@
         };
 
         this.message = function(e) {
-            var elapsed = performance.now() - renderStart;
+//            var elapsed = performance.now() - renderStart;
 //            console.log("received after", elapsed, e);
             var d = e.data;
             var image = ctx.createImageData(d.width, d.height);
@@ -69,7 +75,7 @@
 
         this.render = function() {
             console.log("rendering");
-            renderStart = performance.now();
+//            renderStart = performance.now();
             var grid = 16;
             var aspect = this.canvas.width / this.canvas.height;
             var d = {
@@ -98,7 +104,7 @@
                     ctx.textBaseline = "middle";
                     ctx.fillText(i, d.x + d.width/2, d.y + d.height/2);
                     //TODO: wait till a worker has finishes its previous block before posting a new one
-                    //TODO: cancel render on resize etc.
+                    //TODO: cancel previous render if invoked again
                     //TODO: maybe don't use blocks, but use an interlaced update scheme
                     workers[i++].postMessage(d);
                     if (i == workers.length) i = 0;
@@ -114,15 +120,55 @@
     }
 
     var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
     var mandel = new Mandelbrot();
     mandel.init(canvas, 8);
+
     function resize() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
         mandel.render();
     }
+
+    var dragging = false;
+    function mouseDown(e) {
+        if (e.buttons == 1) {
+            dragging = true;
+        }
+    }
+
+    function mouseUp() {
+        if (dragging) {
+            dragging = false;
+            mandel.render();
+        }
+    }
+
+    var lastMoveEvent = null;
+    function mouseMove(e) {
+        if (dragging && lastMoveEvent != null) {
+            var dx = e.screenX - lastMoveEvent.screenX;
+            var dy = e.screenY - lastMoveEvent.screenY;
+            mandel.center.re -= dx / canvas.width * mandel.zoom;
+            mandel.center.im += dy / canvas.width * mandel.zoom;
+            ctx.drawImage(canvas, dx, dy);
+        }
+        lastMoveEvent = e;
+    }
+
+    function mouseWheel(e) {
+        var factor = 0.5;
+        if (e.wheelDelta > 0) mandel.zoom *= 1 - factor;
+        if (e.wheelDelta < 0) mandel.zoom *= 1 + factor;
+        mandel.render();
+    }
+    canvas.addEventListener("mousedown", mouseDown);
+    canvas.addEventListener("mouseup", mouseUp);
+    canvas.addEventListener("mousemove", mouseMove);
+    canvas.addEventListener("wheel", mouseWheel);
     window.addEventListener("resize", resize);
     resize();
+
 </script>
 
 </body>
