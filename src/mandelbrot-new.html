@@ -52,7 +52,7 @@
 
         this.message = function(e) {
             var elapsed = performance.now() - renderStart;
-            console.log("received after", elapsed, e);
+//            console.log("received after", elapsed, e);
             var d = e.data;
             var image = ctx.createImageData(d.width, d.height);
             var k = 0;
@@ -71,37 +71,36 @@
             console.log("rendering");
             renderStart = performance.now();
             var grid = 16;
+            var w = Math.ceil(this.canvas.width / grid);
+            var h = Math.ceil(this.canvas.height / grid);
+            var re_range = this.zoom / grid;
+            var im_range = this.zoom / grid * this.canvas.height / this.canvas.width;
             var d = {
-                // pixel rectangle in the image
-                x: 0,
-                y: 0,
-                width: Math.floor(this.canvas.width / grid),
-                height: Math.floor(this.canvas.height / grid),
-                // rectangle in the complex plane
-                re_start: 0,
-                im_start: 0,
-                re_range: this.zoom / grid,
-                im_range: this.zoom / grid * this.canvas.height / this.canvas.width,
-                // constants
                 iterations: 200
             };
-            var re_start = this.center.re - d.re_range * grid / 2;
-            var im_start = -this.center.im - d.im_range * grid / 2;
-            var w = 0;
+            var re_start = this.center.re - re_range * grid / 2;
+            var im_start = -this.center.im - im_range * grid / 2;
+            var i = 0;
             for (var x = 0; x < grid; x++) {
                 for (var y = 0; y < grid; y++) {
-                    d.x = d.width * x;
-                    d.y = d.height * y;
-                    d.re_start = re_start + d.re_range * x;
-                    d.im_start = im_start + d.im_range * y;
+                    // pixel rectangle in the image
+                    d.x = w * x;
+                    d.y = h * y;
+                    d.width = w;
+                    d.height = h;
+                    // rectangle in the complex plane
+                    d.re_start = re_start + re_range * x;
+                    d.im_start = im_start + im_range * y;
+                    d.re_range = re_range;
+                    d.im_range = im_range;
                     ctx.beginPath();
                     ctx.rect(d.x, d.y, d.width, d.height);
                     ctx.stroke();
                     //TODO: wait till a worker has finishes its previous block before posting a new one
                     //TODO: cancel render on resize etc.
                     //TODO: maybe don't use blocks, but use an interlaced update scheme
-                    workers[w++].postMessage(d);
-                    if (w == workers.length) w = 0;
+                    workers[i++].postMessage(d);
+                    if (i == workers.length) i = 0;
                 }
             }
         };
