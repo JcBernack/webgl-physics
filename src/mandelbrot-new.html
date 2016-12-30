@@ -71,31 +71,32 @@
             console.log("rendering");
             renderStart = performance.now();
             var grid = 16;
-            var w = Math.ceil(this.canvas.width / grid);
-            var h = Math.ceil(this.canvas.height / grid);
-            var re_range = this.zoom / grid;
-            var im_range = this.zoom / grid * this.canvas.height / this.canvas.width;
+            var aspect = this.canvas.width / this.canvas.height;
             var d = {
+                width: Math.ceil(this.canvas.width / grid),
+                height: Math.ceil(this.canvas.height / grid),
+                re_range: this.zoom / grid,
+                im_range: this.zoom / grid / aspect,
                 iterations: 200
             };
-            var re_start = this.center.re - re_range * grid / 2;
-            var im_start = -this.center.im - im_range * grid / 2;
+            var re_start = this.center.re - this.zoom / 2;
+            var im_start = -this.center.im - this.zoom / 2 / aspect;
             var i = 0;
-            for (var x = 0; x < grid; x++) {
-                for (var y = 0; y < grid; y++) {
+            for (var y = 0; y < grid; y++) {
+                for (var x = 0; x < grid; x++) {
                     // pixel rectangle in the image
-                    d.x = w * x;
-                    d.y = h * y;
-                    d.width = w;
-                    d.height = h;
+                    d.x = d.width * x;
+                    d.y = d.height * y;
                     // rectangle in the complex plane
-                    d.re_start = re_start + re_range * x;
-                    d.im_start = im_start + im_range * y;
-                    d.re_range = re_range;
-                    d.im_range = im_range;
+                    d.re_start = re_start + d.re_range * x;
+                    d.im_start = im_start + d.im_range * y;
                     ctx.beginPath();
                     ctx.rect(d.x, d.y, d.width, d.height);
                     ctx.stroke();
+                    ctx.font = "22px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(i, d.x + d.width/2, d.y + d.height/2);
                     //TODO: wait till a worker has finishes its previous block before posting a new one
                     //TODO: cancel render on resize etc.
                     //TODO: maybe don't use blocks, but use an interlaced update scheme
