@@ -60,6 +60,7 @@
         };
 //        this.zoom = 1.149237505160272e-14;
         this.zoom = 0.00038786765799159173;
+        this.iterations = 200;
 
         var ctx = null;
         var workers = [];
@@ -104,7 +105,7 @@
                 height: Math.ceil(this.canvas.height / grid),
                 re_range: this.zoom / grid,
                 im_range: this.zoom / grid / aspect,
-                iterations: 200
+                iterations: this.iterations
             };
             var re_start = this.center.re - this.zoom / 2;
             var im_start = -this.center.im - this.zoom / 2 / aspect;
@@ -180,8 +181,15 @@
 
     function mouseWheel(e) {
         var factor = 0.5;
-        if (e.wheelDelta > 0) mandel.zoom *= 1 - factor;
-        if (e.wheelDelta < 0) mandel.zoom *= 1 + factor;
+        if (e.wheelDelta < 0) factor = 1/factor;
+        var midX = canvas.width/2;
+        var midY = canvas.height/2;
+        var x = midX/factor;
+        var y = midY/factor;
+        // render preview of the new image
+        ctx.drawImage(canvas, midX-x, midY-y, x*2, y*2);
+        // properly rerender the image
+        mandel.zoom *= factor;
         mandel.render();
     }
     canvas.addEventListener("mousedown", mouseDown);
