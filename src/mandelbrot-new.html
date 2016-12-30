@@ -8,6 +8,7 @@
             margin: 0;
             overflow: hidden;
             color: white;
+            background: black;
         }
 
         canvas {
@@ -55,16 +56,22 @@
         this.center = {
 //            re: -0.7397963083081783,
 //            im: 0.28826751312182947,
-            re:-0.7397549703504344,
-            im: 0.2883886250742989
+//            re:-0.7397549703504344,
+//            im: 0.2883886250742989,
+            re: -0.5,
+            im: 0
         };
 //        this.zoom = 1.149237505160272e-14;
-        this.zoom = 0.00038786765799159173;
-        this.iterations = 200;
+//        this.zoom = 0.00038786765799159173;
+        this.zoom = 3;
+        this.iterations = 400;
+        this.grid = 16;
 
+        var self = this;
         var ctx = null;
         var workers = [];
-//        var renderStart = 0;
+        var renderStart = 0;
+        var renderStep = 0;
 
         this.initWorkers = function(count) {
             var i;
@@ -79,8 +86,6 @@
         };
 
         this.message = function(e) {
-//            var elapsed = performance.now() - renderStart;
-//            console.log("received after", elapsed, e);
             var d = e.data;
             var image = ctx.createImageData(d.width, d.height);
             var k = 0;
@@ -93,45 +98,57 @@
                 image.data[k++] = 255;
             }
             ctx.putImageData(image, d.x, d.y);
+            // enqueue the next block
+            var blocks = self.grid*self.grid;
+            if (renderStep < blocks) {
+                self.renderBlock(this);
+                renderStep++;
+            }
+            // calculate render time when the last block is done
+            if (d.renderStep == blocks-1) {
+                var elapsed = performance.now() - renderStart;
+                console.log("render time", elapsed);
+            }
+        };
+
+        //TODO: maybe don't use blocks, but use an interlaced update scheme
+        this.renderBlock = function(worker) {
+            var d = this.data;
+            // pixel rectangle in the image
+            d.x = d.width * this.spiral.x;
+            d.y = d.height * this.spiral.y;
+            // rectangle in the complex plane
+            d.re_start = this.re_start + d.re_range * this.spiral.x;
+            d.im_start = this.im_start + d.im_range * this.spiral.y;
+//            ctx.beginPath();
+//            ctx.rect(d.x, d.y, d.width, d.height);
+//            ctx.stroke();
+//            ctx.font = "22px sans-serif";
+//            ctx.textAlign = "center";
+//            ctx.textBaseline = "middle";
+//            ctx.fillText(i, d.x + d.width/2, d.y + d.height/2);
+            d.renderStep = renderStep;
+            worker.postMessage(d);
+            // advance spiral to the next block
+            this.spiral.next();
         };
 
         this.render = function() {
-            console.log("rendering");
-//            renderStart = performance.now();
-            var grid = 16;
+            renderStart = performance.now();
+            var grid = this.grid;
             var aspect = this.canvas.width / this.canvas.height;
-            var d = {
+            this.data = {
                 width: Math.ceil(this.canvas.width / grid),
                 height: Math.ceil(this.canvas.height / grid),
                 re_range: this.zoom / grid,
                 im_range: this.zoom / grid / aspect,
                 iterations: this.iterations
             };
-            var re_start = this.center.re - this.zoom / 2;
-            var im_start = -this.center.im - this.zoom / 2 / aspect;
-            var i = 0;
-            var s = new Spiral(grid);
-            for (var block = 0; block < grid*grid; block++) {
-                // pixel rectangle in the image
-                d.x = d.width * s.x;
-                d.y = d.height * s.y;
-                // rectangle in the complex plane
-                d.re_start = re_start + d.re_range * s.x;
-                d.im_start = im_start + d.im_range * s.y;
-                ctx.beginPath();
-                ctx.rect(d.x, d.y, d.width, d.height);
-                ctx.stroke();
-                ctx.font = "22px sans-serif";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(i, d.x + d.width/2, d.y + d.height/2);
-                //TODO: wait till a worker has finishes its previous block before posting a new one
-                //TODO: cancel previous render if invoked again
-                //TODO: maybe don't use blocks, but use an interlaced update scheme
-                workers[i++].postMessage(d);
-                if (i == workers.length) i = 0;
-                // advance spiral to the next block
-                s.next();
+            this.re_start = this.center.re - this.zoom / 2;
+            this.im_start = -this.center.im - this.zoom / 2 / aspect;
+            this.spiral = new Spiral(grid);
+            for (renderStep = 0; renderStep < workers.length; renderStep++) {
+                this.renderBlock(workers[renderStep]);
             }
         };
 
