@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mandelbrot</title>
+    <style type="text/css">
+        body {
+            margin: 0;
+            overflow: hidden;
+            color: white;
+        }
+
+        canvas {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<script src="lib/dat.gui.min.js"></script>
+
+<script>
+
+    /**
+     * Mandelbrot renderer with arbitrary precision and parallelization
+     * arbitrary precision library:
+     * parallelization using WebWorkers: http://www.w3schools.com/html/html5_webworkers.asp
+     */
+    function Mandelbrot() {
+
+        this.canvas = null;
+        this.center = { x: 0, y: 0 };
+        this.zoom = 3;
+
+        var workers = [];
+        var ctx = null;
+
+        this.initWorkers = function(count) {
+            var i;
+            for (i = 0; i < workers.length; i++) {
+                workers[i].terminate();
+            }
+            for (i = 0; i < count; i++) {
+                var worker = new Worker("mandelbrot-worker.js");
+                worker.addEventListener("message", this.message);
+                workers.push(worker);
+            }
+        };
+
+        this.message = function(e) {
+            console.log("received", e);
+            var d = e.data;
+            var image = ctx.createImageData(d.width, d.height);
+            var k = 0;
+            for (var i = 0; i < d.result.length; i++) {
+                var c = d.result[i] / d.iterations * 255;
+                image.data[k++] = c;
+                image.data[k++] = c;
+                image.data[k++] = c;
+                image.data[k++] = 255;
+            }
+            ctx.putImageData(image, d.x, d.y);
+        };
+
+        this.render = function() {
+            console.log("rendering");
+            ctx.beginPath();
+            ctx.moveTo(0,0);
+            ctx.lineTo(this.canvas.width, this.canvas.height);
+            ctx.stroke();
+            var d = {
+                // pixel rectangle in the image
+                x: 0,
+                y: 0,
+                width: this.canvas.width,
+                height: this.canvas.height,
+                // rectangle in the complex plane
+                re_start: -2,
+                im_start: -1,
+                re_range: 3,
+                im_range: 2,
+                // constants
+                iterations: 20
+            };
+            //TODO: split the image into blocks and pass them to the avaiable workers as soon as they are done with their previous block
+            workers[0].postMessage(d);
+        };
+
+        this.init = function(canvas, workerCount) {
+            ctx = canvas.getContext("2d");
+            this.canvas = canvas;
+            this.initWorkers(workerCount);
+        };
+    }
+
+    var canvas = document.getElementById("canvas");
+    var mandel = new Mandelbrot();
+    mandel.init(canvas, 8);
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        mandel.render();
+    }
+    window.addEventListener("resize", resize);
+    resize();
+</script>
+
+</body>
+</html>
