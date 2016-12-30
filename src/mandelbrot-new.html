@@ -64,7 +64,7 @@
 //        this.zoom = 1.149237505160272e-14;
 //        this.zoom = 0.00038786765799159173;
         this.zoom = 3;
-        this.iterations = 400;
+        this.iterations = 800;
         this.grid = 16;
 
         var self = this;
@@ -72,6 +72,29 @@
         var workers = [];
         var renderStart = 0;
         var renderStep = 0;
+
+        // source: http://stackoverflow.com/a/16505538/804614
+        var palette = [];
+        palette.push(66, 30, 15);
+        palette.push(25, 7, 26);
+        palette.push(9, 1, 47);
+        palette.push(4, 4, 73);
+        palette.push(0, 7, 100);
+        palette.push(12, 44, 138);
+        palette.push(24, 82, 177);
+        palette.push(57, 125, 209);
+        palette.push(134, 181, 229);
+        palette.push(211, 236, 248);
+        palette.push(241, 233, 191);
+        palette.push(248, 201, 95);
+        palette.push(255, 170, 0);
+        palette.push(204, 128, 0);
+        palette.push(153, 87, 0);
+        palette.push(106, 52, 3);
+
+        this.interpolate = function(a, b, x) {
+            return a + (b-a) * x;
+        };
 
         this.initWorkers = function(count) {
             var i;
@@ -90,11 +113,14 @@
             var image = ctx.createImageData(d.width, d.height);
             var k = 0;
             for (var i = 0; i < d.result.length; i++) {
-                var c = d.result[i] / d.iterations * 255;
-                //TODO: add fancy color mapping
-                image.data[k++] = c;
-                image.data[k++] = c;
-                image.data[k++] = c;
+                var x = d.result[i] % 1;
+                var c1 = Math.floor(d.result[i]) % palette.length;
+                var c2 = (c1+1) % palette.length;
+                c1 *= 3;
+                c2 *= 3;
+                image.data[k++] = self.interpolate(palette[c1], palette[c2], x);
+                image.data[k++] = self.interpolate(palette[c1+1], palette[c2+1], x);
+                image.data[k++] = self.interpolate(palette[c1+2], palette[c2+2], x);
                 image.data[k++] = 255;
             }
             ctx.putImageData(image, d.x, d.y);
@@ -107,7 +133,7 @@
             // calculate render time when the last block is done
             if (d.renderStep == blocks-1) {
                 var elapsed = performance.now() - renderStart;
-                console.log("render time", elapsed);
+                console.log("render time", Math.round(elapsed), "ms");
             }
         };
 
@@ -137,6 +163,8 @@
             renderStart = performance.now();
             var grid = this.grid;
             var aspect = this.canvas.width / this.canvas.height;
+//            var f = Math.sqrt(0.001 + 2.0 * this.zoom);
+//            this.iterations = Math.floor(223.0/f);
             this.data = {
                 width: Math.ceil(this.canvas.width / grid),
                 height: Math.ceil(this.canvas.height / grid),

@@ -1,4 +1,4 @@
-var log2 = Math.log(2);
+var oneOverLog2 =  1/ Math.log(2);
 var escape = 2 << 16;
 var escape2 = escape*escape;
 
@@ -20,7 +20,7 @@ function message(e) {
             // source: https://en.wikipedia.org/wiki/Mandelbrot_set#Continuous_.28smooth.29_coloring
             if (i < d.iterations) {
                 var log_z = Math.log(zre*zre + zim*zim) / 2;
-                i = i + 1 - Math.log(log_z / log2) / log2;
+                i = i + 1 - Math.log(log_z * oneOverLog2) * oneOverLog2;
             }
             d.result.push(i);
         }
