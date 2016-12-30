@@ -23,6 +23,27 @@
 
 <script>
 
+    // source: http://stackoverflow.com/a/14010215/804614
+    function Spiral(offset) {
+        var shift = Math.floor((offset-1)/2);
+        var x = 0;
+        var y = 0;
+        var leg = 0;
+        var layer = 1;
+        this.x = shift;
+        this.y = shift;
+        this.next = function () {
+            switch (leg) {
+                case 0: x++; if (x == layer) leg++; break;
+                case 1: y++; if (y == layer) leg++; break;
+                case 2: x--; if (x == -layer) leg++; break;
+                case 3: y--; if (y == -layer) { leg = 0; layer++; } break;
+            }
+            this.x = x + shift;
+            this.y = y + shift;
+        };
+    }
+
     /**
      * Mandelbrot renderer with arbitrary precision and interlaced parallel updates
      * arbitrary precision library:
@@ -88,27 +109,28 @@
             var re_start = this.center.re - this.zoom / 2;
             var im_start = -this.center.im - this.zoom / 2 / aspect;
             var i = 0;
-            for (var y = 0; y < grid; y++) {
-                for (var x = 0; x < grid; x++) {
-                    // pixel rectangle in the image
-                    d.x = d.width * x;
-                    d.y = d.height * y;
-                    // rectangle in the complex plane
-                    d.re_start = re_start + d.re_range * x;
-                    d.im_start = im_start + d.im_range * y;
-                    ctx.beginPath();
-                    ctx.rect(d.x, d.y, d.width, d.height);
-                    ctx.stroke();
-                    ctx.font = "22px sans-serif";
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(i, d.x + d.width/2, d.y + d.height/2);
-                    //TODO: wait till a worker has finishes its previous block before posting a new one
-                    //TODO: cancel previous render if invoked again
-                    //TODO: maybe don't use blocks, but use an interlaced update scheme
-                    workers[i++].postMessage(d);
-                    if (i == workers.length) i = 0;
-                }
+            var s = new Spiral(grid);
+            for (var block = 0; block < grid*grid; block++) {
+                // pixel rectangle in the image
+                d.x = d.width * s.x;
+                d.y = d.height * s.y;
+                // rectangle in the complex plane
+                d.re_start = re_start + d.re_range * s.x;
+                d.im_start = im_start + d.im_range * s.y;
+                ctx.beginPath();
+                ctx.rect(d.x, d.y, d.width, d.height);
+                ctx.stroke();
+                ctx.font = "22px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(i, d.x + d.width/2, d.y + d.height/2);
+                //TODO: wait till a worker has finishes its previous block before posting a new one
+                //TODO: cancel previous render if invoked again
+                //TODO: maybe don't use blocks, but use an interlaced update scheme
+                workers[i++].postMessage(d);
+                if (i == workers.length) i = 0;
+                // advance spiral to the next block
+                s.next();
             }
         };
 
