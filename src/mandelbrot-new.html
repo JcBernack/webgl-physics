@@ -24,18 +24,19 @@
 <script>
 
     /**
-     * Mandelbrot renderer with arbitrary precision and parallelization
+     * Mandelbrot renderer with arbitrary precision and interlaced parallel updates
      * arbitrary precision library:
      * parallelization using WebWorkers: http://www.w3schools.com/html/html5_webworkers.asp
      */
     function Mandelbrot() {
 
         this.canvas = null;
-        this.center = { x: 0, y: 0 };
-        this.zoom = 3;
+        this.center = { re: -0.739795, im: 0.288266 };
+        this.zoom = 0.000013;
 
-        var workers = [];
         var ctx = null;
+        var workers = [];
+        var renderStart = 0;
 
         this.initWorkers = function(count) {
             var i;
@@ -48,8 +49,6 @@
                 workers.push(worker);
             }
         };
-
-        var renderStart = 0;
 
         this.message = function(e) {
             var elapsed = performance.now() - renderStart;
@@ -71,26 +70,40 @@
         this.render = function() {
             console.log("rendering");
             renderStart = performance.now();
-            ctx.beginPath();
-            ctx.moveTo(0,0);
-            ctx.lineTo(this.canvas.width, this.canvas.height);
-            ctx.stroke();
+            var grid = 16;
             var d = {
                 // pixel rectangle in the image
                 x: 0,
                 y: 0,
-                width: this.canvas.width,
-                height: this.canvas.height,
+                width: Math.floor(this.canvas.width / grid),
+                height: Math.floor(this.canvas.height / grid),
                 // rectangle in the complex plane
-                re_start: -2,
-                im_start: -1,
-                re_range: 3,
-                im_range: 2,
+                re_start: 0,
+                im_start: 0,
+                re_range: this.zoom / grid,
+                im_range: this.zoom / grid * this.canvas.height / this.canvas.width,
                 // constants
-                iterations: 20
+                iterations: 200
             };
-            //TODO: split the image into blocks and pass them to the avaiable workers as soon as they are done with their previous block
-            workers[0].postMessage(d);
+            var re_start = this.center.re - d.re_range * grid / 2;
+            var im_start = -this.center.im - d.im_range * grid / 2;
+            var w = 0;
+            for (var x = 0; x < grid; x++) {
+                for (var y = 0; y < grid; y++) {
+                    d.x = d.width * x;
+                    d.y = d.height * y;
+                    d.re_start = re_start + d.re_range * x;
+                    d.im_start = im_start + d.im_range * y;
+                    ctx.beginPath();
+                    ctx.rect(d.x, d.y, d.width, d.height);
+                    ctx.stroke();
+                    //TODO: wait till a worker has finishes its previous block before posting a new one
+                    //TODO: cancel render on resize etc.
+                    //TODO: maybe don't use blocks, but use an interlaced update scheme
+                    workers[w++].postMessage(d);
+                    if (w == workers.length) w = 0;
+                }
+            }
         };
 
         this.init = function(canvas, workerCount) {

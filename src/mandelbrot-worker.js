@@ -2,10 +2,9 @@ function message(e) {
     var d = e.data;
     d.result = [];
     for (var y = 0; y < d.height; y++) {
-        var im = d.im_start + y * d.im_range / d.height;
+        var cim = d.im_start + y * d.im_range / d.height;
         for (var x = 0; x < d.width; x++) {
             var cre = d.re_start + x * d.re_range / d.width;
-            var cim = im;
             var zre = cre;
             var zim = cim;
             // iterate Z(i+1) = Z(i)^2 + C as long as |Z| < 2 and i < max
