@@ -63,8 +63,8 @@
         };
 //        this.zoom = 1.149237505160272e-14;
 //        this.zoom = 0.00038786765799159173;
-        this.zoom = 3;
-        this.iterations = 800;
+        this.zoom = 5;
+        this.iterations = 80;
         this.grid = 16;
 
         var self = this;
@@ -113,14 +113,18 @@
             var image = ctx.createImageData(d.width, d.height);
             var k = 0;
             for (var i = 0; i < d.result.length; i++) {
-                var x = d.result[i] % 1;
-                var c1 = Math.floor(d.result[i]) % palette.length;
-                var c2 = (c1+1) % palette.length;
-                c1 *= 3;
-                c2 *= 3;
-                image.data[k++] = self.interpolate(palette[c1], palette[c2], x);
-                image.data[k++] = self.interpolate(palette[c1+1], palette[c2+1], x);
-                image.data[k++] = self.interpolate(palette[c1+2], palette[c2+2], x);
+//                var x = d.result[i] % 1;
+//                var c1 = Math.floor(d.result[i]) % palette.length;
+//                var c2 = (c1+1) % palette.length;
+//                c1 *= 3;
+//                c2 *= 3;
+//                image.data[k++] = self.interpolate(palette[c1], palette[c2], x);
+//                image.data[k++] = self.interpolate(palette[c1+1], palette[c2+1], x);
+//                image.data[k++] = self.interpolate(palette[c1+2], palette[c2+2], x);
+                var c = d.result[i] / self.iterations * 255;
+                image.data[k++] = c;
+                image.data[k++] = c;
+                image.data[k++] = c;
                 image.data[k++] = 255;
             }
             ctx.putImageData(image, d.x, d.y);
