@@ -97,8 +97,8 @@ void main()
     var defaultParameters = {
         centerRe: -0.5,
         centerIm: 0,
-        zoom: 0.33,
-        targetZoom: 0.33,
+        zoom: 0,
+        targetZoom: 0.25,
         smoothColoring: true,
         antialiasing: true
     };
@@ -232,7 +232,7 @@ void main()
         var targetZoom = get("targetZoom");
         var zoom = get("zoom");
         if (Math.abs(zoom - targetZoom) > 0.000001) {
-            zoom += (targetZoom - zoom) * 0.5;
+            zoom += (targetZoom - zoom) * 0.1;
             set("zoom", zoom)
         } else {
             // stop render loop
