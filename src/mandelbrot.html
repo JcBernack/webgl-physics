@@ -34,8 +34,8 @@ precision highp float;
 //TODO: append max iterations as a #define from js to allow dynamically changing it
 #define maxIterations 40.0
 uniform vec2 window;
-uniform float centerX;
-uniform float centerY;
+uniform float centerRe;
+uniform float centerIm;
 uniform float zoom;
 uniform bool smoothColoring;
 uniform bool antialiasing;
@@ -50,7 +50,7 @@ vec2 getScreenPos(vec2 fragCoord)
 
 float mandelbrot(vec2 pos)
 {
-    vec2 c = pos / zoom + vec2(centerX, centerY);
+    vec2 c = pos / zoom + vec2(centerRe, centerIm);
     vec2 z = vec2(0.0);
     float escape2 = escape*escape;
     for (float i = 0.0; i < maxIterations; i++)
@@ -95,8 +95,8 @@ void main()
     var material, mesh;
     var parameters = {};
     var defaultParameters = {
-        centerX: -0.5,
-        centerY: 0,
+        centerRe: -0.5,
+        centerIm: 0,
         zoom: 0.33,
         targetZoom: 0.33,
         smoothColoring: true,
@@ -111,6 +111,7 @@ void main()
         parameters[name] = value;
         setUniform(name, value);
         requestRender();
+        // manually update the gui
         if (gui) {
             for (var i in gui.__controllers) {
                 gui.__controllers[i].updateDisplay();
@@ -176,8 +177,8 @@ void main()
 
     function initializeParameterGUI() {
         gui = new dat.GUI();
-        addParameter("centerX", 1e-6);
-        addParameter("centerY", 1e-6);
+        addParameter("centerRe", 1e-6);
+        addParameter("centerIm", 1e-6);
         addParameter("targetZoom");
         addParameter("smoothColoring");
         addParameter("antialiasing");
@@ -194,10 +195,10 @@ void main()
     function mouseMove(e) {
         if (lastMoveEvent != null && e.buttons == 1) {
             var zoom = get("zoom");
-            var centerX = get("centerX") - (e.screenX - lastMoveEvent.screenX) / canvas.width / zoom;
-            var centerY = get("centerY") + (e.screenY - lastMoveEvent.screenY) / canvas.width / zoom;
-            set("centerX", centerX);
-            set("centerY", centerY);
+            var centerRe = get("centerRe") - (e.screenX - lastMoveEvent.screenX) / canvas.width / zoom;
+            var centerIm = get("centerIm") + (e.screenY - lastMoveEvent.screenY) / canvas.width / zoom;
+            set("centerRe", centerRe);
+            set("centerIm", centerIm);
         }
         lastMoveEvent = e;
     }
