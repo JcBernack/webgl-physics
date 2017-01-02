@@ -36,8 +36,9 @@ precision highp float;
 uniform vec2 window;
 uniform float centerX;
 uniform float centerY;
-uniform float size;
-uniform bool useSmoothColoring;
+uniform float zoom;
+uniform bool smoothColoring;
+uniform bool antialiasing;
 
 const float escape = 65536.0;
 const float oneOverLog2 = 1.0 / log(2.0);
@@ -49,7 +50,7 @@ vec2 getScreenPos(vec2 fragCoord)
 
 float mandelbrot(vec2 pos)
 {
-    vec2 c = pos * size + vec2(centerX, centerY);
+    vec2 c = pos / zoom + vec2(centerX, centerY);
     vec2 z = vec2(0.0);
     float escape2 = escape*escape;
     for (float i = 0.0; i < maxIterations; i++)
@@ -61,7 +62,7 @@ float mandelbrot(vec2 pos)
         z += c;
         if (z.x*z.x + z.y*z.y > escape2)
         {
-            if (!useSmoothColoring) return i;
+            if (!smoothColoring) return i;
             // source: https://en.wikipedia.org/wiki/Mandelbrot_set#Continuous_.28smooth.29_coloring
             float logZ = log(z.x*z.x + z.y*z.y) / 2.0;
             return i + 1.0 - log(logZ * oneOverLog2) * oneOverLog2;
@@ -72,8 +73,16 @@ float mandelbrot(vec2 pos)
 
 void main()
 {
-    vec2 pos = getScreenPos(gl_FragCoord.xy);
-    float n = mandelbrot(pos);
+    float n = mandelbrot(getScreenPos(gl_FragCoord.xy));
+    // anti-aliasing
+    if (antialiasing)
+    {
+        vec2 a = vec2(0.0, 0.5);
+        n += mandelbrot(getScreenPos(gl_FragCoord.xy + a.xy));
+        n += mandelbrot(getScreenPos(gl_FragCoord.xy + a.yx));
+        n += mandelbrot(getScreenPos(gl_FragCoord.xy + a.yy));
+        n /= 4.0;
+    }
     //TODO: add some fancy coloring
     gl_FragColor = vec4(n / maxIterations);
 }
@@ -84,23 +93,22 @@ void main()
     var canvas, stats, gui;
     var renderer, scene, camera;
     var material, mesh;
-
-    var parameters = {
+    var parameters = {};
+    var defaultParameters = {
         centerX: -0.5,
         centerY: 0,
-        size: 3,
-        targetSize: 3,
-        useSmoothColoring: true
+        zoom: 0.33,
+        targetZoom: 0.33,
+        smoothColoring: true,
+        antialiasing: true
     };
 
     function get(name) {
-        var value = window.localStorage.getItem(name);
-        if (value == null) return parameters[name];
-        return parseFloat(value);
+        return parameters[name];
     }
 
     function set(name, value) {
-        window.localStorage.setItem(name, value);
+        parameters[name] = value;
         setUniform(name, value);
         requestRender();
         if (gui) {
@@ -110,16 +118,10 @@ void main()
         }
     }
 
-    function initParameters() {
-        for (var name in parameters) {
-            set(name, get(name));
-        }
-        requestRender();
-    }
-
     function reset() {
-        window.localStorage.clear();
-        initParameters();
+        for (var name in defaultParameters) {
+            set(name, defaultParameters[name]);
+        }
     }
 
     function setUniform(name, value) {
@@ -137,7 +139,7 @@ void main()
         renderer = new THREE.WebGLRenderer({ canvas: canvas });
         // initialize
         initializeScene();
-        initParameters();
+        reset();
         initializeParameterGUI();
         addEventHandlers();
         windowResize();
@@ -166,9 +168,19 @@ void main()
         scene.add(mesh);
     }
 
+    function addParameter(name, step) {
+        var c = gui.add(parameters, name);
+        if (step) c.step(step);
+        c.onChange(function () { set(name, parameters[name]) });
+    }
+
     function initializeParameterGUI() {
         gui = new dat.GUI();
-        gui.add(parameters, "useSmoothColoring").onChange(function () { set("useSmoothColoring", parameters.useSmoothColoring) });
+        addParameter("centerX", 1e-6);
+        addParameter("centerY", 1e-6);
+        addParameter("targetZoom");
+        addParameter("smoothColoring");
+        addParameter("antialiasing");
         gui.add({ reset: reset }, "reset");
     }
 
@@ -181,9 +193,9 @@ void main()
     var lastMoveEvent = null;
     function mouseMove(e) {
         if (lastMoveEvent != null && e.buttons == 1) {
-            var size = get("size");
-            var centerX = get("centerX") - (e.screenX - lastMoveEvent.screenX) / canvas.width * size;
-            var centerY = get("centerY") + (e.screenY - lastMoveEvent.screenY) / canvas.width * size;
+            var zoom = get("zoom");
+            var centerX = get("centerX") - (e.screenX - lastMoveEvent.screenX) / canvas.width / zoom;
+            var centerY = get("centerY") + (e.screenY - lastMoveEvent.screenY) / canvas.width / zoom;
             set("centerX", centerX);
             set("centerY", centerY);
         }
@@ -192,10 +204,10 @@ void main()
 
     function mouseWheel(e) {
         var factor = 0.1;
-        var target = get("targetSize");
-        if (e.wheelDelta > 0) target *= 1 - factor;
-        if (e.wheelDelta < 0) target *= 1 + factor;
-        set("targetSize", target);
+        var target = get("targetZoom");
+        if (e.wheelDelta > 0) target *= 1 + factor;
+        if (e.wheelDelta < 0) target *= 1 - factor;
+        set("targetZoom", target);
     }
 
     function windowResize() {
@@ -216,11 +228,11 @@ void main()
     }
 
     function render() {
-        var targetSize = get("targetSize");
-        var size = get("size");
-        if (Math.abs(size - targetSize) > 0.000001) {
-            size += (targetSize - size) * 0.5;
-            set("size", size)
+        var targetZoom = get("targetZoom");
+        var zoom = get("zoom");
+        if (Math.abs(zoom - targetZoom) > 0.000001) {
+            zoom += (targetZoom - zoom) * 0.5;
+            set("zoom", zoom)
         } else {
             // stop render loop
             rendering = false;
