@@ -32,11 +32,15 @@ void main() {
 <script type="x-shader/x-fragment" id="mandelbrotFS">
 precision highp float;
 //TODO: append max iterations as a #define from js to allow dynamically changing it
-#define maxIterations 400.0
+#define maxIterations 40.0
 uniform vec2 window;
 uniform float centerX;
 uniform float centerY;
 uniform float size;
+uniform bool useSmoothColoring;
+
+const float escape = 65536.0;
+const float oneOverLog2 = 1.0 / log(2.0);
 
 vec2 getScreenPos(vec2 fragCoord)
 {
@@ -47,14 +51,21 @@ float mandelbrot(vec2 pos)
 {
     vec2 c = pos * size + vec2(centerX, centerY);
     vec2 z = vec2(0.0);
-    for (float n = 0.0; n < maxIterations; n++)
+    float escape2 = escape*escape;
+    for (float i = 0.0; i < maxIterations; i++)
     {
         // z(n+1) = z(n)^2 + c
         float re = z.x*z.x - z.y*z.y;
         z.y = 2.0 * z.x * z.y;
         z.x = re;
         z += c;
-        if (z.x*z.x + z.y*z.y > 4.0) return n;
+        if (z.x*z.x + z.y*z.y > escape2)
+        {
+            if (!useSmoothColoring) return i;
+            // source: https://en.wikipedia.org/wiki/Mandelbrot_set#Continuous_.28smooth.29_coloring
+            float logZ = log(z.x*z.x + z.y*z.y) / 2.0;
+            return i + 1.0 - log(logZ * oneOverLog2) * oneOverLog2;
+        }
     }
     return maxIterations;
 }
@@ -64,8 +75,7 @@ void main()
     vec2 pos = getScreenPos(gl_FragCoord.xy);
     float n = mandelbrot(pos);
     //TODO: add some fancy coloring
-    gl_FragColor = vec4(n/maxIterations);
-//    gl_FragColor = vec4(pos*size+vec2(centerX, centerY), 0.0, 1.0);
+    gl_FragColor = vec4(n / maxIterations);
 }
 </script>
 
@@ -79,7 +89,8 @@ void main()
         centerX: -0.5,
         centerY: 0,
         size: 3,
-        targetSize: 3
+        targetSize: 3,
+        useSmoothColoring: true
     };
 
     function get(name) {
@@ -157,6 +168,7 @@ void main()
 
     function initializeParameterGUI() {
         gui = new dat.GUI();
+        gui.add(parameters, "useSmoothColoring").onChange(function () { set("useSmoothColoring", parameters.useSmoothColoring) });
         gui.add({ reset: reset }, "reset");
     }
 
