@@ -31,8 +31,8 @@ void main() {
 
 <script type="x-shader/x-fragment" id="mandelbrotFS">
 precision highp float;
-//TODO: append max iterations as a #define from js to allow dynamically changing it
-#define maxIterations 40.0
+#define maxIterations 400
+uniform int iterations;
 uniform vec2 window;
 uniform float centerRe;
 uniform float centerIm;
@@ -53,8 +53,9 @@ float mandelbrot(vec2 pos)
     vec2 c = pos / zoom + vec2(centerRe, centerIm);
     vec2 z = vec2(0.0);
     float escape2 = escape*escape;
-    for (float i = 0.0; i < maxIterations; i++)
+    for (int i = 0; i < maxIterations; i++)
     {
+        if (i >= iterations) break;
         // z(n+1) = z(n)^2 + c
         float re = z.x*z.x - z.y*z.y;
         z.y = 2.0 * z.x * z.y;
@@ -62,19 +63,18 @@ float mandelbrot(vec2 pos)
         z += c;
         if (z.x*z.x + z.y*z.y > escape2)
         {
-            if (!smoothColoring) return i;
+            if (!smoothColoring) return float(i);
             // source: https://en.wikipedia.org/wiki/Mandelbrot_set#Continuous_.28smooth.29_coloring
             float logZ = log(z.x*z.x + z.y*z.y) / 2.0;
-            return i + 1.0 - log(logZ * oneOverLog2) * oneOverLog2;
+            return float(i) + 1.0 - log(logZ * oneOverLog2) * oneOverLog2;
         }
     }
-    return maxIterations;
+    return float(iterations);
 }
 
 void main()
 {
     float n = mandelbrot(getScreenPos(gl_FragCoord.xy));
-    // anti-aliasing
     if (antialiasing)
     {
         vec2 a = vec2(0.0, 0.5);
@@ -84,7 +84,7 @@ void main()
         n /= 4.0;
     }
     //TODO: add some fancy coloring
-    gl_FragColor = vec4(n / maxIterations);
+    gl_FragColor = vec4(n / float(iterations));
 }
 </script>
 
@@ -99,6 +99,7 @@ void main()
         centerIm: 0,
         zoom: 0,
         targetZoom: 0.25,
+        iterations: 40,
         smoothColoring: true,
         antialiasing: true
     };
@@ -169,31 +170,39 @@ void main()
         scene.add(mesh);
     }
 
-    function addParameter(name, step) {
+    function addParameter(name, options) {
         var c = gui.add(parameters, name);
-        if (step) c.step(step);
+        if (options) for (var o in options) c = c[o](options[o]);
         c.onChange(function () { set(name, parameters[name]) });
     }
 
     function initializeParameterGUI() {
         gui = new dat.GUI();
-        addParameter("centerRe", 1e-6);
-        addParameter("centerIm", 1e-6);
-        addParameter("targetZoom");
+        addParameter("centerRe", { step: 1e-6 });
+        addParameter("centerIm", { step: 1e-6 });
+        addParameter("targetZoom", { min: 0.01 });
+        addParameter("iterations", { min: 2, max: 400 });
         addParameter("smoothColoring");
         addParameter("antialiasing");
         gui.add({ reset: reset }, "reset");
     }
 
     function addEventHandlers() {
+        canvas.addEventListener("mousedown", mouseDown);
         canvas.addEventListener("mousemove", mouseMove);
         canvas.addEventListener("wheel", mouseWheel);
         window.addEventListener("resize", windowResize);
     }
 
+    var dragging = false;
+    function mouseDown(e) {
+        if (e.buttons == 1) dragging = true;
+    }
+
     var lastMoveEvent = null;
     function mouseMove(e) {
-        if (lastMoveEvent != null && e.buttons == 1) {
+        if (e.buttons != 1) dragging = false;
+        if (dragging && lastMoveEvent != null) {
             var zoom = get("zoom");
             var centerRe = get("centerRe") - (e.screenX - lastMoveEvent.screenX) / canvas.width / zoom;
             var centerIm = get("centerIm") + (e.screenY - lastMoveEvent.screenY) / canvas.width / zoom;
