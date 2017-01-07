@@ -33,20 +33,22 @@ void main() {
 precision highp float;
 
 // GLSL requires a compile-time constant upper limit for the number of iterations
-#define maxIterations 400
+#define maxIterations 2000
 // variable number of maximum iterations used to break out of the loop
 uniform int iterations;
 // size of the viewport in pixels
 uniform vec2 viewport;
 // center of the view in the complex plane
-uniform float centerRe;
-uniform float centerIm;
+uniform vec2 centerRe;
+uniform vec2 centerIm;
 // zoom factor, inverse of the visible range in the complex plane
 uniform float zoom;
-// switch to enable smooth coloring
-uniform bool smoothColoring;
+// switch to enable double precision emulation
+uniform bool doubleEmulation;
 // switch to enable 4x anti-aliasing
 uniform bool antialiasing;
+// switch to enable smooth coloring
+uniform bool smoothColoring;
 // variables used for color mapping
 uniform vec3 colorFrequency;
 uniform vec3 colorPhase;
@@ -65,10 +67,49 @@ vec2 position(vec2 fragCoord)
     return (fragCoord / viewport - 0.5) * vec2(1.0, viewport.y / viewport.x);
 }
 
-// iterates the mandelbrot series
-float mandelbrot(vec2 pos)
+// multiplication of values a and b with emulated double precision
+vec2 mul(vec2 a, vec2 b)
 {
-    vec2 c = pos / zoom + vec2(centerRe, centerIm);
+    float r = a.x*b.y + a.y*b.x;
+    return vec2(a.x*b.x, a.y*b.y + r);
+}
+
+// squared length of a complex number with emulated double precision
+float lenSquared(vec2 re, vec2 im)
+{
+    return dot(mul(re, re) + mul(im, im), vec2(1.0));
+}
+
+// iterates the mandelbrot series with emulated double precision using two floats for each value
+// currently very unstable, for some center positions it works good for some not at all
+vec2 mandelbrot_emu(vec2 pos)
+{
+    vec2 cr = centerRe;
+    vec2 ci = centerIm;
+    // add the pixel offset to the small part
+    cr.y += pos.x / zoom;
+    ci.y += pos.y / zoom;
+    vec2 zr = vec2(0.0);
+    vec2 zi = vec2(0.0);
+    for (int i = 0; i < maxIterations; i++)
+    {
+        if (i >= iterations) break;
+        // z(n+1) = z(n)^2 + c
+        vec2 re = mul(zr, zr) - mul(zi, zi);
+        zi = 2.0 * mul(zr, zi);
+        zr = re;
+        zr += cr;
+        zi += ci;
+        float len2 = lenSquared(zr, zi);
+        if (len2 > escape2) return vec2(float(i), len2);
+    }
+    return vec2(0.0);
+}
+
+// iterates the mandelbrot series with single precision
+vec2 mandelbrot(vec2 pos)
+{
+    vec2 c = pos / zoom + vec2(centerRe.x, centerIm.x);
     vec2 z = vec2(0.0);
     for (int i = 0; i < maxIterations; i++)
     {
@@ -78,15 +119,10 @@ float mandelbrot(vec2 pos)
         z.y = 2.0 * z.x * z.y;
         z.x = re;
         z += c;
-        if (z.x*z.x + z.y*z.y > escape2)
-        {
-            if (!smoothColoring) return float(i);
-            // source: https://en.wikipedia.org/wiki/Mandelbrot_set#Continuous_.28smooth.29_coloring
-            float logZ = log(z.x*z.x + z.y*z.y) / 2.0;
-            return float(i) + 1.0 - log(logZ * oneOverLog2) * oneOverLog2;
-        }
+        float len2 = z.x*z.x + z.y*z.y;
+        if (len2 > escape2) return vec2(float(i), len2);
     }
-    return 0.0;
+    return vec2(0.0);
 }
 
 // fancy color oscillator
@@ -95,9 +131,26 @@ vec3 color(float iterations)
     return pow(-cos(iterations*colorFrequency + colorPhase)*0.5 + 0.5, vec3(colorExponent));
 }
 
+// get color for subpixel with given offset
 vec3 get(vec2 offset)
 {
-    return color(mandelbrot(position(gl_FragCoord.xy + offset)));
+    vec2 pos = position(gl_FragCoord.xy + offset);
+    vec2 mandel;
+    if (doubleEmulation)
+    {
+        mandel = mandelbrot_emu(pos);
+    }
+    else
+    {
+        mandel = mandelbrot(pos);
+    }
+    if (smoothColoring)
+    {
+        // source: https://en.wikipedia.org/wiki/Mandelbrot_set#Continuous_.28smooth.29_coloring
+        float logZ = log(mandel.y) / 2.0;
+        mandel.x += 1.0 - log(logZ * oneOverLog2) * oneOverLog2;
+    }
+    return color(mandel.x);
 }
 
 void main()
@@ -133,7 +186,8 @@ void main()
         colorPhase: "#FFFFFF",
         colorExponent: 1.8,
         smoothColoring: true,
-        antialiasing: true
+        antialiasing: true,
+        doubleEmulation: false
     };
 
     function get(name) {
@@ -159,9 +213,21 @@ void main()
     }
 
     function setUniform(name, value) {
+        // parse strings as color values
+        if (typeof(value) == "string") value = new THREE.Color(value);
+        // use two floats for the center position to increase precision
+        if (name == "centerRe" || name == "centerIm") value = splitDouble(value);
+        // set uniform on the shader material
         var uniforms = material.uniforms;
         if (!uniforms[name]) uniforms[name] = {};
-        uniforms[name].value = typeof(value) == "string" ? new THREE.Color(value) : value;
+        uniforms[name].value = value;
+    }
+
+    function splitDouble(input) {
+        var split = new Float32Array(2);
+        split[0] = input;
+        split[1] = input - split[0];
+        return split;
     }
 
     function initialize() {
@@ -218,12 +284,13 @@ void main()
         addParameter("centerRe", { step: 1e-6 });
         addParameter("centerIm", { step: 1e-6 });
         addParameter("targetZoom", { min: 0.01 });
-        addParameter("iterations", { min: 2, max: 400 });
+        addParameter("iterations", { min: 2, max: 2000 });
         addColor("colorFrequency");
         addColor("colorPhase");
         addParameter("colorExponent", { min: 0.1, max: 20 });
         addParameter("smoothColoring");
         addParameter("antialiasing");
+        addParameter("doubleEmulation");
         gui.add({ reset: reset }, "reset");
     }
 
