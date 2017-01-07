@@ -170,7 +170,7 @@ void main()
 
 <script>
 
-    var canvas, stats, gui;
+    var canvas, stats, gui, live_gui_controllers;
     var renderer, scene, camera;
     var material, mesh;
     var parameters = {};
@@ -198,12 +198,7 @@ void main()
         parameters[name] = value;
         setUniform(name, value);
         requestRender();
-        // manually update the gui
-        if (gui) {
-            for (var i in gui.__controllers) {
-                gui.__controllers[i].updateDisplay();
-            }
-        }
+        updateParameterGUI();
     }
 
     function reset() {
@@ -268,30 +263,48 @@ void main()
         scene.add(mesh);
     }
 
-    function addParameter(name, options) {
-        var c = gui.add(parameters, name);
+    function addParameter(folder, name, options) {
+        var c = folder.add(parameters, name);
         if (options) for (var o in options) c = c[o](options[o]);
         c.onChange(function () { set(name, parameters[name]); });
+        return c;
     }
 
-    function addColor(name) {
-        var c = gui.addColor(parameters, name);
+    function addColor(folder, name) {
+        var c = folder.addColor(parameters, name);
         c.onChange(function () { set(name, parameters[name]); });
+        return c;
     }
 
     function initializeParameterGUI() {
         gui = new dat.GUI();
-        addParameter("centerRe", { step: 1e-6 });
-        addParameter("centerIm", { step: 1e-6 });
-        addParameter("targetZoom", { min: 0.01 });
-        addParameter("iterations", { min: 2, max: 2000 });
-        addColor("colorFrequency");
-        addColor("colorPhase");
-        addParameter("colorExponent", { min: 0.1, max: 20 });
-        addParameter("smoothColoring");
-        addParameter("antialiasing");
-        addParameter("doubleEmulation");
+        var mandel = gui.addFolder("view");
+        live_gui_controllers = [
+            addParameter(mandel, "centerRe", { step: 1e-6 }),
+            addParameter(mandel, "centerIm", { step: 1e-6 }),
+            addParameter(mandel, "targetZoom", { min: 0.01 })
+        ];
+        var color = gui.addFolder("coloring");
+        addColor(color, "colorFrequency");
+        addColor(color, "colorPhase");
+        addParameter(color, "colorExponent", { min: 0.1, max: 20 });
+        addParameter(color, "smoothColoring");
+        var common = gui.addFolder("common");
+        addParameter(common, "iterations", { min: 2, max: 2000 });
+        addParameter(common, "antialiasing");
+        var beta = gui.addFolder("unstable double precision emulation");
+        addParameter(beta, "doubleEmulation");
         gui.add({ reset: reset }, "reset");
+        common.open();
+    }
+
+    function updateParameterGUI() {
+        // manually update the gui
+        if (live_gui_controllers) {
+            for (var i in live_gui_controllers) {
+                live_gui_controllers[i].updateDisplay();
+            }
+        }
     }
 
     function addEventHandlers() {
