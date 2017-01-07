@@ -292,7 +292,7 @@ void main()
         var mandel = gui.addFolder("view");
         var color = gui.addFolder("coloring");
         var common = gui.addFolder("common");
-        var beta = gui.addFolder("unstable double precision emulation");
+        var double = gui.addFolder("unstable double precision emulation");
         guiControllers = [
             addParameter(mandel, "centerRe", { step: 1e-6 }),
             addParameter(mandel, "centerIm", { step: 1e-6 }),
@@ -303,7 +303,7 @@ void main()
             addParameter(color, "smoothColoring"),
             addParameter(common, "iterations", { min: 2, max: 2000 }),
             addParameter(common, "antialiasing"),
-            addParameter(beta, "doubleEmulation")
+            addParameter(double, "doubleEmulation")
         ];
         gui.add({ reset: reset }, "reset");
         common.open();
@@ -318,46 +318,99 @@ void main()
         }
     }
 
+    var rendering = false;
+    function requestRender() {
+        if (rendering) return;
+        rendering = true;
+        requestAnimationFrame(render);
+    }
+
+    function render() {
+        var targetZoom = get("targetZoom");
+        var zoom = get("zoom");
+        if (!floatAlmostEqual(zoom, targetZoom)) {
+            zoom += (targetZoom - zoom) * 0.1;
+            set("zoom", zoom)
+        } else {
+            // stop render loop
+            rendering = false;
+        }
+        renderer.render(scene, camera);
+        stats.update();
+        if (rendering) {
+            requestAnimationFrame(render);
+        }
+    }
+
+    function floatAlmostEqual(a, b) {
+        var epsilon = 0.001;
+        return Math.abs(a-b)/ (Math.abs(a) + Math.abs(b)) < epsilon;
+    }
+
     function addEventHandlers() {
-        canvas.addEventListener("touchstart", touchStart, false);
-        canvas.addEventListener("touchmove", touchMove, false);
+        canvas.addEventListener("touchstart", touchStart);
+        canvas.addEventListener("touchmove", touchMove);
         canvas.addEventListener("mousedown", mouseDown);
         canvas.addEventListener("mousemove", mouseMove);
         canvas.addEventListener("wheel", mouseWheel);
         window.addEventListener("resize", windowResize);
-        window.addEventListener("scroll", preventMotion, false);
-        window.addEventListener("touchmove", preventMotion, false);
+        window.addEventListener("scroll", preventMotion);
+        window.addEventListener("touchmove", preventMotion);
     }
+
+    var swipeGesture = false;
+    var pinchGesture = false;
+    var pinchGestureDistance = 0;
+    var pinchGestureZoom = 0;
+    var lastX = null;
+    var lastY = null;
 
     function touchStart(e) {
         e.preventDefault();
-        lastX = null;
-        lastY = null;
+        swipeGesture = e.touches.length == 1;
+        pinchGesture = e.touches.length == 2;
+        if (swipeGesture) {
+            lastX = null;
+            lastY = null;
+        }
+        if (pinchGesture) {
+            pinchGestureDistance = touchDistance(e.touches[0], e.touches[1]);
+            pinchGestureZoom = get("targetZoom");
+        }
+    }
+
+    function touchDistance(a, b){
+        var dx = a.screenX - b.screenX;
+        var dy = a.screenY - b.screenY;
+        return Math.sqrt(dx*dx + dy*dy);
     }
 
     function touchMove(e) {
         e.preventDefault();
-        move(e.touches[0].screenX, e.touches[0].screenY);
+        if (swipeGesture) {
+            move(e.touches[0].screenX, e.touches[0].screenY);
+        }
+        if (pinchGesture) {
+            var target = pinchGestureZoom * touchDistance(e.touches[0], e.touches[1]) / pinchGestureDistance;
+            set("targetZoom", target);
+        }
     }
 
-    var dragging = false;
     function mouseDown(e) {
-        if (e.buttons == 1) {
-            dragging = true;
+        swipeGesture = e.buttons == 1;
+        if (swipeGesture) {
             lastX = null;
             lastY = null;
         }
     }
 
     function mouseMove(e) {
-        if (e.buttons != 1) dragging = false;
-        if (dragging) {
+        swipeGesture = e.buttons == 1;
+        if (swipeGesture) {
             move(e.screenX, e.screenY);
         }
     }
 
-    var lastX = null;
-    var lastY = null;
     function move(x, y) {
         if (lastX != null && lastY != null) {
             var zoom = get("zoom");
@@ -390,34 +443,6 @@ void main()
         window.scrollTo(0, 0);
         event.preventDefault();
         event.stopPropagation();
-    }
-
-    var rendering = false;
-    function requestRender() {
-        if (rendering) return;
-        rendering = true;
-        requestAnimationFrame(render);
-    }
-
-    function render() {
-        var targetZoom = get("targetZoom");
-        var zoom = get("zoom");
-        if (!floatEqual(zoom, targetZoom)) {
-            zoom += (targetZoom - zoom) * 0.1;
-            set("zoom", zoom)
-        } else {
-            // stop render loop
-            rendering = false;
-        }
-        renderer.render(scene, camera);
-        stats.update();
-        if (rendering) {
-            requestAnimationFrame(render);
-        }
-    }
-
-    function floatEqual(a, b) {
-        return Math.abs(a-b)/ (Math.abs(a) + Math.abs(b)) < 0.001;
     }
 
     initialize();
