@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Mandelbrot</title>
     <style type="text/css">
         body {
@@ -318,28 +319,55 @@ void main()
     }
 
     function addEventHandlers() {
+        canvas.addEventListener("touchstart", touchStart, false);
+        canvas.addEventListener("touchmove", touchMove, false);
         canvas.addEventListener("mousedown", mouseDown);
         canvas.addEventListener("mousemove", mouseMove);
         canvas.addEventListener("wheel", mouseWheel);
         window.addEventListener("resize", windowResize);
+        window.addEventListener("scroll", preventMotion, false);
+        window.addEventListener("touchmove", preventMotion, false);
+    }
+
+    function touchStart(e) {
+        e.preventDefault();
+        lastX = null;
+        lastY = null;
+    }
+
+    function touchMove(e) {
+        e.preventDefault();
+        move(e.touches[0].screenX, e.touches[0].screenY);
     }
 
     var dragging = false;
     function mouseDown(e) {
-        if (e.buttons == 1) dragging = true;
+        if (e.buttons == 1) {
+            dragging = true;
+            lastX = null;
+            lastY = null;
+        }
     }
 
-    var lastMoveEvent = null;
     function mouseMove(e) {
         if (e.buttons != 1) dragging = false;
-        if (dragging && lastMoveEvent != null) {
+        if (dragging) {
+            move(e.screenX, e.screenY);
+        }
+    }
+
+    var lastX = null;
+    var lastY = null;
+    function move(x, y) {
+        if (lastX != null && lastY != null) {
             var zoom = get("zoom");
-            var centerRe = get("centerRe") - (e.screenX - lastMoveEvent.screenX) / canvas.width / zoom;
-            var centerIm = get("centerIm") + (e.screenY - lastMoveEvent.screenY) / canvas.width / zoom;
+            var centerRe = get("centerRe") - (x - lastX) / canvas.width / zoom;
+            var centerIm = get("centerIm") + (y - lastY) / canvas.width / zoom;
             set("centerRe", centerRe);
             set("centerIm", centerIm);
         }
-        lastMoveEvent = e;
+        lastX = x;
+        lastY = y;
     }
 
     function mouseWheel(e) {
@@ -356,6 +384,12 @@ void main()
         renderer.setSize(w, h);
         setUniform("viewport", new Float32Array([w, h]));
         requestRender();
+    }
+
+    function preventMotion(event) {
+        window.scrollTo(0, 0);
+        event.preventDefault();
+        event.stopPropagation();
     }
 
     var rendering = false;
