@@ -75,6 +75,11 @@ float mandelbrot(vec2 pos)
     return 0.0;
 }
 
+vec3 getColor(float iterations)
+{
+    return pow(-cos(iterations*colorFrequency + colorPhase)*0.5 + 0.5, vec3(colorExponent));
+}
+
 void main()
 {
     float n = mandelbrot(getScreenPos(gl_FragCoord.xy));
@@ -87,7 +92,7 @@ void main()
         n *= 0.25;
     }
     // use some fancy coloring
-    gl_FragColor = vec4(pow(-cos(n*colorFrequency + colorPhase)*0.5 + 0.5, vec3(colorExponent)), 1.0);
+    gl_FragColor = vec4(getColor(n), 1.0);
 }
 </script>
 
@@ -102,10 +107,12 @@ void main()
         centerIm: 0,
         zoom: 0,
         targetZoom: 0.25,
-        iterations: 40,
-        colorFrequency: "#FFFFFF",
-        colorPhase: "#000000",
-        colorExponent: 1.5,
+        iterations: 256,
+//        colorFrequency: "#101623",
+//        colorFrequency: "#12151b",
+        colorFrequency: "#090a0c",
+        colorPhase: "#FFFFFF",
+        colorExponent: 1.8,
         smoothColoring: true,
         antialiasing: true
     };
