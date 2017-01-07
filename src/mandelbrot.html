@@ -185,6 +185,7 @@ void main()
         colorFrequency: "#090a0c",
         colorPhase: "#FFFFFF",
         colorExponent: 1.8,
+        //BUG: clicking reset does not reset the checkboxes in the gui
         smoothColoring: true,
         antialiasing: true,
         doubleEmulation: false
@@ -358,7 +359,7 @@ void main()
     function render() {
         var targetZoom = get("targetZoom");
         var zoom = get("zoom");
-        if (Math.abs(zoom - targetZoom) > 0.000001) {
+        if (!floatEqual(zoom, targetZoom)) {
             zoom += (targetZoom - zoom) * 0.1;
             set("zoom", zoom)
         } else {
@@ -370,6 +371,10 @@ void main()
         if (rendering) {
             requestAnimationFrame(render);
         }
+    }
+
+    function floatEqual(a, b) {
+        return Math.abs(a-b)/ (Math.abs(a) + Math.abs(b)) < 0.001;
     }
 
     initialize();
