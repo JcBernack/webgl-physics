@@ -170,7 +170,7 @@ void main()
 
 <script>
 
-    var canvas, stats, gui, live_gui_controllers;
+    var canvas, stats, gui, guiControllers;
     var renderer, scene, camera;
     var material, mesh;
     var parameters = {};
@@ -182,10 +182,13 @@ void main()
         iterations: 256,
 //        colorFrequency: "#101623",
 //        colorFrequency: "#12151b",
+        // red glow
+//        colorFrequency: "#18181a",
+//        colorPhase: "#ff0000",
+        // white brown blue
         colorFrequency: "#090a0c",
         colorPhase: "#FFFFFF",
         colorExponent: 1.8,
-        //BUG: clicking reset does not reset the checkboxes in the gui
         smoothColoring: true,
         antialiasing: true,
         doubleEmulation: false
@@ -280,30 +283,30 @@ void main()
     function initializeParameterGUI() {
         gui = new dat.GUI();
         var mandel = gui.addFolder("view");
-        live_gui_controllers = [
+        var color = gui.addFolder("coloring");
+        var common = gui.addFolder("common");
+        var beta = gui.addFolder("unstable double precision emulation");
+        guiControllers = [
             addParameter(mandel, "centerRe", { step: 1e-6 }),
             addParameter(mandel, "centerIm", { step: 1e-6 }),
-            addParameter(mandel, "targetZoom", { min: 0.01 })
+            addParameter(mandel, "targetZoom", { min: 0.01 }),
+            addColor(color, "colorFrequency"),
+            addColor(color, "colorPhase"),
+            addParameter(color, "colorExponent", { min: 0.1, max: 20 }),
+            addParameter(color, "smoothColoring"),
+            addParameter(common, "iterations", { min: 2, max: 2000 }),
+            addParameter(common, "antialiasing"),
+            addParameter(beta, "doubleEmulation")
         ];
-        var color = gui.addFolder("coloring");
-        addColor(color, "colorFrequency");
-        addColor(color, "colorPhase");
-        addParameter(color, "colorExponent", { min: 0.1, max: 20 });
-        addParameter(color, "smoothColoring");
-        var common = gui.addFolder("common");
-        addParameter(common, "iterations", { min: 2, max: 2000 });
-        addParameter(common, "antialiasing");
-        var beta = gui.addFolder("unstable double precision emulation");
-        addParameter(beta, "doubleEmulation");
         gui.add({ reset: reset }, "reset");
         common.open();
     }
 
     function updateParameterGUI() {
         // manually update the gui
-        if (live_gui_controllers) {
-            for (var i in live_gui_controllers) {
-                live_gui_controllers[i].updateDisplay();
+        if (guiControllers) {
+            for (var i in guiControllers) {
+                guiControllers[i].updateDisplay();
             }
         }
     }
