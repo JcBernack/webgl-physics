@@ -405,7 +405,7 @@ void main()
     }
 
     function mouseMove(e) {
-        swipeGesture = e.buttons == 1;
+        if (e.buttons != 1) swipeGesture = false;
         if (swipeGesture) {
             move(e.screenX, e.screenY);
         }
