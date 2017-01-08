@@ -426,8 +426,9 @@ void main()
     function mouseWheel(e) {
         var factor = 0.1;
         var target = get("targetZoom");
-        if (e.wheelDelta > 0) target *= 1 + factor;
-        if (e.wheelDelta < 0) target *= 1 - factor;
+        var delta = e.wheelDelta || e.deltaY || e.detail;
+        if (delta > 0) target *= 1 + factor;
+        if (delta < 0) target *= 1 - factor;
         set("targetZoom", target);
     }
 
