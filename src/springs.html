@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<title>Spring Simulation</title>
+<script type="text/javascript" language="JavaScript">
+
+// heavily based on the Quirksmode addEvent contest winner, John Resig
+function addEvent(obj, type, fn) {
+	if (obj.addEventListener) obj.addEventListener(type, fn, false);
+	else if (obj.attachEvent) {
+		obj["e" + type + fn] = fn;
+		obj[type + fn] = function() {
+			obj["e" + type + fn](window.event);
+		};
+		obj.attachEvent("on" + type, obj[type + fn]);
+	}
+}
+
+function removeEvent(obj, type, fn) {
+	if (obj.removeEventListener) obj.removeEventListener(type, fn, false);
+	else if (obj.detachEvent) {
+		obj.detachEvent("on" + type, obj[type + fn]);
+		obj[type + fn] = null;
+		obj["e" + type + fn] = null;
+	}
+}
+
+// requestAnim shim layer by Paul Irish
+window.requestAnimFrame = window.requestAnimationFrame
+	|| window.webkitRequestAnimationFrame
+	|| window.mozRequestAnimationFrame
+	|| window.oRequestAnimationFrame
+	|| window.msRequestAnimationFrame
+	|| function(callback, element) { window.setTimeout(callback, 1000 / 60); };
+
+function trace(msg)
+{
+	if (typeof console != 'undefined' && typeof console.log != 'undefined')
+	{
+		console.log(msg);
+	}
+}
+
+function length(x, y, z)
+{
+	return Math.sqrt(x*x + y*y + z*z);
+}
+
+// namespace declaration
+if (!SpringSim) var SpringSim = {
+};
+
+SpringSim.MassPoint = function(simulator)
+{
+	var that = {
+		// Wrapper object holding all public members.
+	};
+	// *** Public Fields ***
+	that.fixed = false;
+	that.mass = 1;
+	that.posX = 0;
+	that.posY = 0;
+	that.posZ = 0;
+	that.velocityX = 0;
+	that.velocityY = 0;
+	that.velocityZ = 0;
+	that.forceX = 0;
+	that.forceY = 0;
+	that.forceZ = 0;
+
+	// *** Private Fields ***
+	var _sim = simulator;
+
+	that.applyMovement = function(elapsedTime)
+	{
+		if (!that.fixed)
+		{
+			// apply acceleration
+			var mt = elapsedTime / that.mass;
+			that.velocityX += that.forceX * mt;
+			that.velocityY += that.forceY * mt;
+			that.velocityZ += that.forceZ * mt;
+			// apply velocity
+			that.posX += that.velocityX;
+			that.posY += that.velocityY;
+			that.posZ += that.velocityZ;
+		}
+	};
+	
+	that.resetForces = function()
+	{
+		that.forceX = 0;
+		that.forceY = 0;
+		that.forceZ = 0;
+	};
+	
+	that.applyForces = function()
+	{
+		if (!that.fixed)
+		{
+			// apply gravity
+			that.forceX += that.mass * _sim.gravityConstant * _sim.gravityX;
+			that.forceY += that.mass * _sim.gravityConstant * _sim.gravityY;
+			that.forceZ += that.mass * _sim.gravityConstant * _sim.gravityZ;
+			// apply air friction
+			that.forceX -= that.velocityX * _sim.damping;
+			that.forceY -= that.velocityY * _sim.damping;
+			that.forceZ -= that.velocityZ * _sim.damping;
+		}
+	};
+
+	return that;
+};
+
+SpringSim.Spring = function(simulator, massA, massB)
+{
+	var that = {
+		// Wrapper object holding all public members.
+	};
+	
+	that.massA = massA;
+	that.massB = massB;
+	
+	that.forceX = 0;
+	that.forceY = 0;
+	that.forceZ = 0;
+	
+	that.forceSum = 0;
+
+	// *** Private Fields ***
+	var _sim = simulator;
+
+	that.applyForce = function()
+	{
+		// calculate distance
+		var dx = that.massB.posX - that.massA.posX;
+		var dy = that.massB.posY - that.massA.posY;
+		var dz = that.massB.posZ - that.massA.posZ;
+		// calculate force including internal spring friction
+		var force = (1 - _sim.springLength/length(dx, dy, dz)) * _sim.springConstant;
+		that.forceX = force * dx - (that.massA.velocityX-that.massB.velocityX) * _sim.damping;
+		that.forceY = force * dy - (that.massA.velocityY-that.massB.velocityY) * _sim.damping;
+		that.forceZ = force * dz - (that.massA.velocityZ-that.massB.velocityZ) * _sim.damping;
+		// add forces
+		that.massA.forceX += that.forceX;
+		that.massA.forceY += that.forceY;
+		that.massA.forceZ += that.forceZ;
+		that.massB.forceX -= that.forceX;
+		that.massB.forceY -= that.forceY;
+		that.massB.forceZ -= that.forceZ;
+		// calculate total force and check if it exeeds maximum strain on the spring
+		that.forceSum = Math.round(length(that.forceX, that.forceY, that.forceZ));
+		return that.forceSum > _sim.maxForce;
+	};
+
+	return that;
+};
+
+SpringSim.SpringSimulation = function(canvasId)
+{
+	var that = {
+		// Wrapper object holding all public members.
+	};
+	// *** Public Fields ***
+	// parameters
+	that.massSize = 10;
+	that.gravityConstant = 5;
+	that.damping = 0.8;
+	that.springConstant = 10;
+	that.springLength = 50;
+	that.maxForce = 5000;
+	that.iterations = 10;
+	// gravity direction
+	that.gravityX = 0;
+	that.gravityY = 1;
+	that.gravityZ = 0;
+	// switches
+	that.renderMasses = false;
+	that.renderSprings = true;
+	that.renderForceColor = true;
+	that.renderForceText = false;
+	that.enableMultisampling = false;
+	// styles
+	that.backgroundStyle = "#000000";
+	that.foregroundStyle = "#FFFFFF";
+	that.forceStyle = "#FF0000";
+
+	// *** Private Fields ***
+	var _running = false;
+	// convas
+	var _canvas = document.getElementById(canvasId);
+	var _ctx = _canvas.getContext("2d");
+	// object container
+	var _masses = null;
+	var _springs = null;
+	var _mouseMass = null;
+	// timings
+	var _tReference = 0;
+	var _tFrame = 0;
+	// temporary parameters while touching
+	var _springLength;
+
+	// *** Public Methods ***
+	that.update = function(timeStep)
+	{
+		var i;
+		// reapply forces
+		for (i = 0; i < _masses.length; i++)
+		{
+			_masses[i].resetForces();
+			_masses[i].applyForces();
+		}
+		// apply spring forces
+		var ripped = [];
+		for (i = 0; i < _springs.length; i++)
+		{
+			if (_springs[i].applyForce())
+			{
+				ripped.push(i);
+			}
+		}
+		// remove overstrained springs
+		for (i = 0; i < ripped.length; i++)
+		{
+			_springs.splice(ripped[i],1);
+		}
+		// move masses
+		for (i = 0; i < _masses.length; i++)
+		{
+			_masses[i].applyMovement(timeStep);
+		}
+	};
+	
+	that.refresh = function()
+	{
+		_ctx.clearRect(0, 0, _canvas.width, _canvas.height);
+		that.render();
+	};
+	
+	that.render = function()
+	{
+		if (that.enableMultisampling)
+		{
+			_ctx.fillStyle = that.backgroundStyle;
+			_ctx.globalAlpha = 0.2;
+			_ctx.fillRect(0, 0, _canvas.width, _canvas.height);
+			_ctx.globalAlpha = 1;
+		}
+		else
+		{
+			_ctx.clearRect(0, 0, _canvas.width, _canvas.height);
+		}
+		_ctx.textAlign = "center";
+		_ctx.textBaseline = "middle";
+		_ctx.lineWidth = 2;
+		if (that.renderSprings)
+		{
+			for (i = 0; i < _springs.length; i++)
+			{
+				var s = _springs[i];
+				_ctx.beginPath();
+				_ctx.moveTo(s.massA.posX, s.massA.posY);
+				_ctx.lineTo(s.massB.posX, s.massB.posY);
+				_ctx.strokeStyle = that.foregroundStyle;
+				_ctx.stroke();
+				if (that.renderForceColor)
+				{
+					// color line by strain on spring
+					_ctx.globalAlpha = s.forceSum/that.maxForce;
+					_ctx.strokeStyle = that.forceStyle;
+					_ctx.stroke();
+					_ctx.globalAlpha = 1;
+				}
+				if (that.renderForceText)
+				{
+					// render force value as text, centered between the two mass points
+					_ctx.fillStyle = that.forceStyle;
+					_ctx.fillText(s.forceSum, s.massA.posX+(s.massB.posX-s.massA.posX)/2, s.massA.posY+(s.massB.posY-s.massA.posY)/2);
+				}
+			}
+		}
+		if (that.renderMasses)
+		{
+			for (i = 0; i < _masses.length; i++)
+			{
+				var m = _masses[i];
+				var size2 = that.massSize/2;
+				var forceSum;
+				if (that.renderForceColor || that.renderForceText)
+				{
+					forceSum = Math.round(length(m.forceX, m.forceY, m.forceZ));
+				}
+				_ctx.beginPath();
+				_ctx.rect(m.posX-size2, m.posY-size2, that.massSize, that.massSize);
+				_ctx.strokeStyle = that.foregroundStyle;
+				_ctx.stroke();
+				_ctx.fillStyle = that.backgroundStyle;
+				_ctx.fill();
+				if (that.renderForceColor)
+				{
+					// color rect by strain on the mass
+					_ctx.globalAlpha = forceSum/that.maxForce;
+					_ctx.fillStyle = that.forceStyle;
+					_ctx.fill();
+					_ctx.globalAlpha = 1;
+				}
+				if (that.renderForceText)
+				{
+					// render force value as text to the bottom right of the rect
+					_ctx.fillStyle = that.forceStyle;
+					_ctx.fillText(forceSum, m.posX+size2, m.posY+size2*3);
+				}
+			}
+		}
+		// print information
+		_ctx.textAlign = "right";
+		_ctx.textBaseline = "top";
+		_ctx.fillStyle = that.foregroundStyle;
+		var x = _canvas.width - 10;
+		var y = function(i) { return 10+15*i };
+		_ctx.fillText("Masses: " + _masses.length, x , y(0));
+		_ctx.fillText("Springs: " + _springs.length, x , y(1));
+		_ctx.fillText("Time per frame: " + Math.round(_tFrame) + "ms", x , y(2));
+		_ctx.fillText("FPS: " + Math.round(1000/_tFrame), x , y(3));
+		_ctx.fillText("(most browsers limit fps to 60)", x , y(4));
+		_ctx.fillText("GravityX: " + that.gravityX, x , y(6));
+		_ctx.fillText("GravityY: " + that.gravityY, x , y(7));
+		_ctx.fillText("GravityZ: " + that.gravityZ, x , y(8));
+		
+	};
+	
+	that.timing = function()
+	{
+		// get current time
+		var t = new Date().getTime();
+		// combine render times for the current and last frames
+		// this applies some averaging and therefor prevents the number from jumping around too much
+		if (_tReference > 0)
+		{
+			var ratio = 0.9;
+			_tFrame = (t-_tReference)*(1-ratio)+_tFrame*ratio;
+		}
+		// set new time reference
+		_tReference = t;
+	};
+	
+	var mainLoop = function()
+	{
+		// request redraw
+		if (_running)
+		{
+			requestAnimFrame(mainLoop);
+		}
+		// maximum frame time prevents the system from exploding when the simulation runs very slow
+		var maxFrameTime = 40;
+		// the force calculations are much faster than the drawing,
+		// to get more accurate results the calculations are done multiple times per rendered frame
+		// calculate the time progression for one iteration in milliseconds
+		var timeStep = (_tFrame > maxFrameTime ? maxFrameTime : _tFrame) / 1000 / that.iterations;
+		// update forces, velocities and positions multiple times
+		for (var i = 0; i < that.iterations; i++)
+		{
+			that.update(timeStep);
+		}
+		// render the scene
+		that.render();
+		// calculate timings
+		that.timing();
+	};
+	
+	that.startStop = function(interval)
+	{
+		if (!_running)
+		{
+			that.run();
+		}
+		else
+		{
+			that.stop();
+		}
+	};
+	
+	that.run = function(interval)
+	{
+		if (!_running)
+		{
+			_running = true;
+			// register mouse events
+			addEvent(_canvas, "mousedown", mouseDown);
+			addEvent(_canvas, "mousemove", mouseMove);
+			addEvent(_canvas, "mouseup", dragEnd);
+			// register touch events
+			addEvent(_canvas, "touchstart", touchStart);
+			addEvent(_canvas, "touchmove", touchMove);
+			addEvent(_canvas, "touchend", dragEnd);
+			addEvent(_canvas, "gesturestart", gestureStart);
+			addEvent(_canvas, "gesturechange", gestureChange);
+			addEvent(_canvas, "gestureend", gestureEnd);
+			// register device sensor events
+			if (window.DeviceOrientationEvent)
+			{
+				addEvent(window, "devicemotion", deviceMotion);
+			}
+			// register keyboard events
+			addEvent(document, "keydown", keyDown);
+			requestAnimFrame(mainLoop);
+		}
+	};
+
+	that.stop = function()
+	{
+		if (_running)
+		{
+			_running = false;
+			// unregister mouse events
+			removeEvent(_canvas, "mousedown", mouseDown);
+			removeEvent(_canvas, "mousemove", mouseMove);
+			removeEvent(_canvas, "mouseup", dragEnd);
+			// unregister touch events
+			removeEvent(_canvas, "touchstart", touchStart);
+			removeEvent(_canvas, "touchmove", touchMove);
+			removeEvent(_canvas, "touchend", dragEnd);
+			removeEvent(_canvas, "gesturestart", gestureStart);
+			removeEvent(_canvas, "gesturechange", gestureChange);
+			removeEvent(_canvas, "gestureend", gestureEnd);
+			// unregister device sensor events
+			if (window.DeviceOrientationEvent)
+			{
+				removeEvent(window, "devicemotion", deviceMotion);
+			}
+			// register keyboard events
+			removeEvent(document, "keydown", keyDown);
+		}
+	};
+	
+	var getMousePosition = function(e)
+	{
+		var pos = { X:0, Y:0 };
+		// retrieves position of the mouse
+		pos.X = (window.Event)? e.pageX: event.clientX;
+		pos.Y = (window.Event)? e.pageY: event.clientY;
+		pos.X -= _canvas.offsetLeft;
+		pos.Y -= _canvas.offsetTop;
+		return pos;
+	};
+	
+	var getTouchPosition = function(touch)
+	{
+		var pos = { X:0, Y:0 };
+		// retrieves position of the touch
+		pos.X = touch.pageX;
+		pos.Y = touch.pageY;
+		return pos;
+	};
+	
+	var mouseDown = function(e)
+	{
+		dragStart(getMousePosition(e));
+	};
+	
+	var mouseMove = function(e)
+	{
+		dragMove(getMousePosition(e));
+	};
+	
+	var touchStart = function(e)
+	{
+		e.preventDefault();
+		dragStart(getTouchPosition(e.changedTouches[0]));
+	};
+	
+	var touchMove = function(e)
+	{
+		e.preventDefault();
+		dragMove(getTouchPosition(e.targetTouches[e.targetTouches.length-1]));
+	};
+	
+	var gestureStart = function(e)
+	{
+		if (_mouseMass == null)
+		{
+			// save current spring length
+			_springLength = that.springLength;
+		}
+	};
+	
+	var gestureChange = function(e)
+	{
+		if (_mouseMass == null)
+		{
+			// adjust spring length while gesturing
+			that.springLength = Math.round(_springLength*e.scale);
+			initInputControls();
+		}
+	};
+	
+	var gestureEnd = function(e)
+	{
+		if (_mouseMass == null)
+		{
+			// save new length when gesture ends
+			that.springLength = Math.round(_springLength*e.scale);
+			_springLength = that.springLength;
+			initInputControls();
+		}
+	};
+	
+	var dragStart = function(pos)
+	{
+		// find closest mass point
+		var minD = 200;
+		for (var i = 0; i < _masses.length; i++)
+		{
+			var m =_masses[i];
+			var dx = m.posX-pos.X;
+			var dy = m.posY-pos.Y;
+			var d = dx*dx+dy*dy;
+			if (d < minD)
+			{
+				minD = d;
+				_mouseMass = m;
+			}
+		}
+		if (_mouseMass != null)
+		{
+			// fix mass to mouse position
+			_mouseMass.fixed = true;
+			_mouseMass.posX = pos.X;
+			_mouseMass.posY = pos.Y;
+		}
+	};
+	
+	var dragMove = function(pos)
+	{
+		if (_mouseMass != null)
+		{
+			// position clicked mass point under the mouse
+			_mouseMass.posX = pos.X;
+			_mouseMass.posY = pos.Y;
+		}
+	};
+	
+	var dragEnd = function(e)
+	{
+		if (_mouseMass != null)
+		{
+			// release mass point
+			_mouseMass.fixed = false;
+			_mouseMass = null;
+		}
+	};
+	
+	var keyDown = function(e)
+	{
+		// release mass point from mouse, but keep it fixed
+		_mouseMass = null;
+	};
+	
+	var deviceMotion = function(e)
+	{
+		// check if the event actually sends something sane
+		if (e.accelerationIncludingGravity.x == null) return;
+		// retrieve acceleration sensor data
+		ax = e.accelerationIncludingGravity.x;
+		ay = -e.accelerationIncludingGravity.y;
+		az = e.accelerationIncludingGravity.z;
+		// set normalised gravity direction
+		var l = length(ax, ay, az);
+		that.gravityX = ax/l;
+		that.gravityY = ay/l;
+		that.gravityZ = az/l;
+	};
+
+	that.initializeLine = function(n)
+	{
+		var i;
+		// add masses
+		_masses = new Array();
+		for (i = 0; i < n; i++)
+		{
+			var mass = new SpringSim.MassPoint(that);
+			mass.posX = 400 + i * that.springLength;
+			mass.posY = 200;
+			_masses.push(mass);
+		}
+		_masses[0].fixed = true;
+		//_masses[n-1].fixed = true;
+		// add springs
+		_springs = new Array();
+		for (i = 0; i < _masses.length - 1; i++)
+		{
+			var spring = new SpringSim.Spring(that, _masses[i], _masses[i+1]);
+			_springs.push(spring);
+		}
+		// initial mass placement
+		that.refresh();
+	};
+	
+	that.initializeRect = function(n)
+	{
+		var i;
+		// add masses
+		_masses = new Array();
+		for (i = 0; i < n*n; i++)
+		{
+			var mass = new SpringSim.MassPoint(that);
+			mass.fixed = false;
+			mass.posX = 400 + (i%n) * that.springLength;
+			mass.posY = 200 + Math.floor(i/n) * that.springLength;
+			_masses.push(mass);
+		}
+		_masses[0].fixed = true;
+		_masses[n-1].fixed = true;
+		// add springs
+		_springs = new Array();
+		for (i = 0; i < n*n; i++)
+		{
+			if (i%n < n-1)
+			{
+				_springs.push(new SpringSim.Spring(that, _masses[i], _masses[i+1]));
+			}
+			if (Math.floor(i/n) < n-1)
+			{
+				_springs.push(new SpringSim.Spring(that, _masses[i], _masses[i+n]));
+			}
+		}
+		// initial mass placement
+		that.refresh();
+	};
+	
+	that.initializeTetraeder = function()
+	{
+		var i, x, y, z;
+		// add masses
+		_masses = new Array();
+		for (i = 0; i < 4; i++)
+		{
+			_masses.push(new SpringSim.MassPoint(that));
+		}
+		_masses[0].fixed = true;
+		_masses[0].posX = 400;
+		_masses[0].posY = 200;
+		_masses[1].posX = 400;
+		_masses[1].posY = 225;
+		_masses[1].posZ = 25;
+		_masses[2].posX = 425;
+		_masses[2].posY = 225;
+		_masses[3].posX = 375;
+		_masses[3].posY = 225;
+		// add springs
+		_springs = new Array();
+		_springs.push(new SpringSim.Spring(that, _masses[0], _masses[1]));
+		_springs.push(new SpringSim.Spring(that, _masses[0], _masses[2]));
+		_springs.push(new SpringSim.Spring(that, _masses[0], _masses[3]));
+		_springs.push(new SpringSim.Spring(that, _masses[1], _masses[2]));
+		_springs.push(new SpringSim.Spring(that, _masses[2], _masses[3]));
+		_springs.push(new SpringSim.Spring(that, _masses[3], _masses[1]));
+		// initial mass placement
+		that.refresh();
+	};
+	
+	that.initializeCube = function(n)
+	{
+		var i, x, y, z;
+		// add masses
+		_masses = new Array();
+		var m = new Array();
+		for (x = 0; x < n; x++)
+		{
+			var my = new Array();
+			for (y = 0; y < n; y++)
+			{
+				var mz = new Array();
+				for (z = 0; z < n; z++)
+				{
+					var mass = new SpringSim.MassPoint(that);
+					mass.fixed = y == 0;
+					mass.posX = 400+x*that.springLength+z*that.springLength/4;
+					mass.posY = 200+y*that.springLength+z*that.springLength/5;
+					mass.posZ = 10+z*that.springLength;
+					_masses.push(mass);
+					mz.push(mass);
+				}
+				my.push(mz);
+			}
+			m.push(my);
+		}
+		// add springs
+		_springs = new Array();
+		for (x = 0; x < n; x++)
+		{
+			for (y = 0; y < n; y++)
+			{
+				for (z = 0; z < n; z++)
+				{
+					if (x+1 < n) _springs.push(new SpringSim.Spring(that, m[x][y][z], m[x+1][y][z]));
+					if (y+1 < n) _springs.push(new SpringSim.Spring(that, m[x][y][z], m[x][y+1][z]));
+					if (z+1 < n) _springs.push(new SpringSim.Spring(that, m[x][y][z], m[x][y][z+1]));
+				}
+			}
+		}
+		// initial mass placement
+		that.refresh();
+	};
+	
+	var disposeElements = function()
+	{
+		that.stop();
+		var i;
+		for (i = 0; i < _springs.length; i++)
+		{
+			delete _springs[i];
+		}
+		for (i = 0; i < _masses.length; i++)
+		{
+			delete _masses[i];
+		}
+	};
+
+	return that;
+};
+
+var sim;
+
+function updateSize()
+{
+	// fill window with canvas
+	var canvas = document.getElementById("canvas")
+	canvas.width = window.innerWidth;
+	canvas.height = window.innerHeight;
+}
+
+function init()
+{
+	// resizing
+	window.onresize = updateSize;
+	updateSize();
+	sim = new SpringSim.SpringSimulation("canvas");
+	initInputControls();
+	sim.initializeRect(10);
+	sim.run();
+}
+
+function initInputControls()
+{
+	// transfers simulation parameters from the simulation instance the controls
+	document.getElementById("gravityConstantInput").value = sim.gravityConstant;
+	document.getElementById("dampingInput").value = sim.damping * 100;
+	document.getElementById("springConstantInput").value = sim.springConstant * 100;
+	document.getElementById("springlengthInput").value = sim.springLength;
+	document.getElementById("maxForceInput").value = sim.maxForce;
+	document.getElementById("iterationsInput").value = sim.iterations;
+}
+
+function setValuesFromInput()
+{
+	// transfers simulation parameters from the controls to the simulation instance
+	sim.gravityConstant = parseInt(document.getElementById("gravityConstantInput").value);
+	sim.damping = parseInt(document.getElementById("dampingInput").value) / 100;
+	sim.springConstant = parseInt(document.getElementById("springConstantInput").value) / 100;
+	sim.springLength = parseInt(document.getElementById("springlengthInput").value);
+	sim.maxForce = parseInt(document.getElementById("maxForceInput").value);
+	sim.iterations = parseInt(document.getElementById("iterationsInput").value);
+}
+
+function switchOption(option)
+{
+	// toggles the given simulation option
+	sim[option] = !sim[option];
+	sim.refresh();
+}
+
+</script>
+
+<style type="text/css">
+*
+{
+	margin: 0;
+	padding: 0;
+}
+
+button, input
+{
+	padding: 5px;
+}
+
+input
+{
+	width: 50px;
+}
+
+html, body
+{
+	width: 100%;
+	height: 100%;
+	background-color: #000000;
+	color: #FFFFFF;
+}
+
+.infobox
+{
+	border: 1px solid gray;
+	padding: 5px;
+	background-color: rgba(64,64,64,0.5);
+}
+
+#canvas
+{
+	display: block;
+}
+
+#controls
+{
+	position: absolute;
+	left: 10px;
+	pointer-events: none;
+}
+
+#controls div
+{
+	clear: left;
+	float: left;
+	margin-top: 10px;
+	display: inline-block;
+	pointer-events: auto;
+}
+
+#parameters td
+{
+	padding-right: 5px;
+}
+
+#parameters input[type="text"]
+{
+	text-align: right;
+}
+
+#author
+{
+	position: absolute;
+	left: 10px;
+	bottom: 10px;
+}
+
+#note
+{
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+}
+
+ul
+{
+   list-style-position: inside;
+}
+
+ul ul
+{
+	margin-left: 10px;
+}
+
+h2
+{
+	font-size: 16pt;
+}
+
+h3
+{
+	font-size: 16pt;
+	display: inline;
+	margin-right: 10px;
+}
+
+</style>
+</head>
+
+<body onload="init();">
+<div id="controls">
+<div class="infobox">
+	<h3>Simulations</h3>
+	<button onclick="sim.startStop();">Start / Stop</button>
+	<button onclick="sim.initializeLine(10);">Line</button>
+	<button onclick="sim.initializeRect(10);">Rect</button>
+	<button onclick="sim.initializeCube(6);">Cube</button>
+	<button onclick="sim.initializeTetraeder();">Tetraeder</button>
+	<br />
+	<h3>Render options</h3>
+	<button onclick="switchOption('renderMasses');">Masses</button>
+	<button onclick="switchOption('renderSprings');">Springs</button>
+	<button onclick="switchOption('renderForceColor');">Force color</button>
+	<button onclick="switchOption('renderForceText');">Force text</button>
+	<button onclick="switchOption('enableMultisampling');">Multisampling</button>
+</div>
+<div class="infobox">
+	<h2>Parameters</h2>
+	<table>
+		<tr><td>Gravity</td><td><input type="text" id="gravityConstantInput"/></td></tr>
+		<tr><td>Friction</td><td><input type="text" id="dampingInput"/></td></tr>
+		<tr><td>Spring constant</td><td><input type="text" id="springConstantInput"/></td></tr>
+		<tr><td>Spring length</td><td><input type="text" id="springlengthInput"/></td></tr>
+		<tr><td>Breaking force</td><td><input type="text" id="maxForceInput"/></td></tr>
+		<tr><td>Iterations per frame</td><td><input type="text" id="iterationsInput"/></td></tr>
+		<tr><td colspan="2" style="text-align: center;"><input type="submit" value="Apply" onclick="setValuesFromInput();"/></td></tr>
+	</table>
+</div>
+</div>
+<canvas id="canvas"></canvas>
+<div id="author">&copy; J.C. Bernack</div>
+<div id="note" class="infobox">
+	<h2>Controls</h2>
+	<ul>
+		<li>PC:</li>
+		<ul>
+			<li>Use mouse to drag mass points around</li>
+			<li>Press any key while dragging to fix the position</li>
+		</ul>
+		<li>iOS:</li>
+		<ul>
+			<li>Use simple touch moves to drag mass points around</li>
+			<li>Use the pinch-gesture to adjust the spring length</li>
+			<li>The acceleration sensor determines the direction of gravity</li>
+			<li>(lock screen orientation for that to work properly)</li>
+		</ul>
+	</ul>
+	<h2>Tested on the latest versions of</h2>
+	<ul>
+		<li>Chrome</li>
+		<li>Firefox</li>
+		<li>Internet Explorer</li>
+		<li>Safari</li>
+		<li>Safari mobile (touch support)</li>
+	 </ul>
+</div>
+</body>
+
+</html>
