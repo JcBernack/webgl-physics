@@ -1,0 +1,745 @@
+<html>
+
+<head>
+<title>Ballern</title>
+<script type="text/javascript" language="JavaScript">
+
+// heavily based on the Quirksmode addEvent contest winner, John Resig
+function addEvent(obj, type, fn) {
+    if (obj.addEventListener) obj.addEventListener(type, fn, false);
+    else if (obj.attachEvent) {
+        obj["e" + type + fn] = fn;
+        obj[type + fn] = function() {
+            obj["e" + type + fn](window.event);
+        };
+        obj.attachEvent("on" + type, obj[type + fn]);
+    }
+}
+
+function removeEvent(obj, type, fn) {
+    if (obj.removeEventListener) obj.removeEventListener(type, fn, false);
+    else if (obj.detachEvent) {
+        obj.detachEvent("on" + type, obj[type + fn]);
+        obj[type + fn] = null;
+        obj["e" + type + fn] = null;
+    }
+}
+
+// requestAnim shim layer by Paul Irish
+window.requestAnimFrame = window.requestAnimationFrame
+	|| window.webkitRequestAnimationFrame
+	|| window.mozRequestAnimationFrame
+	|| window.oRequestAnimationFrame
+	|| window.msRequestAnimationFrame
+	|| function(callback, element) { window.setTimeout(callback, 1000 / 60); };
+
+// from http://stackoverflow.com/questions/4576724/dotted-stroke-in-canvas
+var CP = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+if (CP.lineTo) {
+    CP.dashedLine = function(x, y, x2, y2, da) {
+        if (!da) da = [10,5];
+        this.save();
+        var dx = (x2-x), dy = (y2-y);
+        var len = Math.sqrt(dx*dx + dy*dy);
+        var rot = Math.atan2(dy, dx);
+        this.translate(x, y);
+        this.moveTo(0, 0);
+        this.rotate(rot);       
+        var dc = da.length;
+        var di = 0, draw = true;
+        x = 0;
+        while (len > x) {
+            x += da[di++ % dc];
+            if (x > len) x = len;
+            draw ? this.lineTo(x, 0): this.moveTo(x, 0);
+            draw = !draw;
+        }       
+        this.restore();
+    }
+}
+if (CP.arc) {
+    CP.arcMoveTo = function(x, y, radius, angle) {
+		this.moveTo(x+radius*Math.cos(angle), y+radius*Math.sin(angle));
+    }
+    CP.dashedArc = function(x, y, radius, angleStart, angleEnd, da) {
+        if (!da) da = [10,5];
+        var len = 2*Math.PI*radius;
+        var dc = da.length
+        var di = 0;
+        var draw = true;
+        var angle = angleStart;
+        while (angle < angleEnd)
+        {
+            var angleStep = angle + da[di++ % dc]/radius;
+            if (angleStep > angleEnd) angleStep = angleEnd;
+            if (draw)
+            {
+				this.arc(x, y, radius, angle, angleStep);
+			}
+			else
+			{
+				this.arcMoveTo(x, y, radius, angleStep);
+			}
+			angle = angleStep;
+            draw = !draw;
+        }       
+    }
+}
+
+function trace(msg)
+{
+	if (typeof console != 'undefined' && typeof console.log != 'undefined')
+	{
+		console.log(msg);
+	}
+}
+
+function length(x, y)
+{
+	return Math.sqrt(x*x + y*y);
+}
+
+function randomRange(min, max)
+{
+	return min + (max-min)*Math.random();
+}
+
+// namespace declaration
+if (!Ballern) var Ballern = {};
+
+Ballern.Player = function(orbit, name)
+{
+	var that = {};
+	// *** Public Fields ***
+	that.name = name;
+	that.posX = 0;
+	that.posY = 0;
+	that.orbit = orbit;
+	that.radius = 0;
+	that.angle = Math.random()*Math.PI*2;
+	that.angleSpeed = 0.25/Math.sqrt(orbit+1);
+	that.aimX = 0;
+	that.aimY = 0;
+	that.aimAngle = 0;
+	// *** Private Fields ***
+	return that;
+};
+
+Ballern.Asteroid = function()
+{
+	var that = {};
+	// *** Public Fields ***
+	that.posX = 0;
+	that.posY = 0;
+	that.velocityX = 0;
+	that.velocityY = 0;
+	that.forceX = 0;
+	that.forceY = 0;
+	that.size = 1;
+	that.mass = 1;
+	that.angle = 0;
+	that.angleSpeed = 0;
+	// *** Private Fields ***
+	
+	that.resetForce = function()
+	{
+		that.forceX = 0;
+		that.forceY = 0;
+	};
+	
+	that.applyForce = function(x, y, mass)
+	{
+		var dx = x - that.posX;
+		var dy = y - that.posY;
+		var d = length(dx, dy);
+		//var force = mass*that.mass/d/d;
+		var force = mass/d/d;
+		that.forceX += force*dx/d;
+		that.forceY += force*dy/d;
+	};
+	return that;
+};
+
+Ballern.Rocket = function()
+{
+	var that = {};
+	// *** Public Fields ***
+	that.posX = 0;
+	that.posY = 0;
+	that.velocityX = 0;
+	that.velocityY = 0;
+	that.forceX = 0;
+	that.forceY = 0;
+	that.destX = 0;
+	that.destY = 0;
+	that.mass = 1;
+	// *** Private Fields ***
+	
+	that.resetForce = function()
+	{
+		that.forceX = 0;
+		that.forceY = 0;
+	};
+	
+	that.applyForce = function(x, y, mass)
+	{
+		var dx = x - that.posX;
+		var dy = y - that.posY;
+		var d = length(dx, dy);
+		//var force = mass*that.mass/d/d;
+		var force = mass/d/d;
+		that.forceX += force*dx/d;
+		that.forceY += force*dy/d;
+	};
+	return that;
+};
+
+Ballern.Game = function(canvasId)
+{
+	var that = {
+		// Wrapper object holding all public members.
+	};
+	
+	// *** Public Fields ***
+	// parameters
+	that.enableMultisampling = true;
+	
+	// *** Private Fields ***
+	var _running = false;
+	// convas
+	var _canvas = document.getElementById("canvas");
+	var _ctx = _canvas.getContext("2d");
+	// timings
+	var _tReference = 0;
+	var _tFrame = 0;
+	var _tAsteroidSpawn = 0;
+	// container
+	var _localPlayer = null;
+	var _players = null
+	var _asteroids = null;
+	var _rockets = null;
+	// game constants
+	var _sunSize = 50;
+	var _sunMass = 7500000;
+	var _playerSize = 20;
+	var _playerMass = 2500000;
+	var _orbitDistanceFromSun = 120;
+	var _playerOrbitDistance = 60;
+	var _rocketSize = 3;
+	var _rocketMass = 1;
+	var _rocketSpeed = 400;
+	var _asteroidSizeRange = [10, 16];
+	var _asteroidSpeedRange = [20, 80];
+	
+	that.Initialize = function()
+	{
+		_players = new Array();
+		_asteroids = new Array();
+		_rockets = new Array();
+		// add dummy players
+		_players.push(new Ballern.Player(0, "Huso"));
+		_players.push(new Ballern.Player(1, "You"));
+		_players.push(new Ballern.Player(2, "asdasd"));
+		//_players.push(new Ballern.Player(3, "Adolfo"));
+		//_players.push(new Ballern.Player(4, "Pinky"));
+		_localPlayer = _players[1];
+	};
+	
+	// handles game logic, movement of objects, collisions, etc.
+	var Update = function(timeStep)
+	{
+		// update players
+		for (i = 0; i < _players.length; i++)
+		{
+			var p = _players[i];
+			// move position
+			p.angle += timeStep*p.angleSpeed;
+			p.radius = _orbitDistanceFromSun + _playerOrbitDistance*p.orbit;
+			p.posX = p.radius*Math.cos(p.angle);
+			p.posY = p.radius*Math.sin(p.angle);
+			// adjust aim
+			var dx = p.aimX - p.posX;
+			var dy = p.aimY - p.posY;
+			p.aimAngle = Math.atan(dy/dx);
+			if (dx < 0)
+			{
+				p.aimAngle += Math.PI;
+			}
+		}
+		// apply gravity on asteroids
+		for (var i = 0; i < _asteroids.length; i++)
+		{
+			var a = _asteroids[i];
+			a.resetForce();
+			a.applyForce(0, 0, _sunMass);
+			for (var j = 0; j < _players.length; j++)
+			{
+				var p = _players[j];
+				a.applyForce(p.posX, p.posY, _playerMass);
+			}
+		}
+		// apply gravity on rockets
+		for (var i = 0; i < _rockets.length; i++)
+		{
+			var r = _rockets[i];
+			r.resetForce();
+			r.applyForce(0, 0, _sunMass);
+			for (var j = 0; j < _players.length; j++)
+			{
+				var p = _players[j];
+				if (_localPlayer != p)
+				{
+					r.applyForce(p.posX, p.posY, _playerMass);
+				}
+			}
+		}
+		// asteroid stuff
+		var spawnradius = 10+length(_canvas.width, _canvas.height)/2;
+		// move asteroids
+		for (var i = 0; i < _asteroids.length; i++)
+		{
+			var a = _asteroids[i];
+			// apply acceleration
+			var mt = timeStep / a.mass;
+			a.velocityX += a.forceX * mt;
+			a.velocityY += a.forceY * mt;
+			a.posX += a.velocityX*timeStep;
+			a.posY += a.velocityY*timeStep;
+			a.angle += a.angleSpeed*timeStep;
+			// remove asteroids out of sight or which fell into the sun
+			var len = length(a.posX, a.posY);
+			if (len > spawnradius+10 || len < _sunSize)
+			{
+				_asteroids.splice(i--, 1);
+			}
+			else
+			{
+				// check for collision with player
+				for (j = 0; j < _players.length; j++)
+				{
+					var p = _players[j];
+					if (length(p.posX-a.posX, p.posY-a.posY) < _playerSize)
+					{
+						_asteroids.splice(i--, 1);
+						break;
+					}
+				}
+			}
+		}
+		// spawn asteroid
+		_tAsteroidSpawn += timeStep;
+		var spawnInterval = 1;
+		if (_tAsteroidSpawn > spawnInterval)
+		{
+			_tAsteroidSpawn -= spawnInterval;
+			var a = new Ballern.Asteroid();
+			// spawn randomly on minimal circle outside of visible region
+			var spawnangle = 2*Math.PI*Math.random();
+			a.posX = spawnradius*Math.cos(spawnangle);
+			a.posY = spawnradius*Math.sin(spawnangle);
+			// choose random direction towards the visible region
+			a.velocityX = _canvas.width*Math.random() - _canvas.width/2 - a.posX;
+			a.velocityY = _canvas.height*Math.random() - _canvas.height/2 - a.posY;
+			// choose random size
+			a.size = randomRange(_asteroidSizeRange[0], _asteroidSizeRange[1]);
+			a.mass = a.size;
+			// choose random speed from range
+			var speed = randomRange(_asteroidSpeedRange[0], _asteroidSpeedRange[1]) / length(a.velocityX, a.velocityY);
+			a.velocityX *=  speed;
+			a.velocityY *=  speed;
+			// choose random angle and rotation speed
+			a.angle = 2*Math.PI*Math.random();
+			a.angleSpeed = randomRange(-1.5, 1.5);
+			_asteroids.push(a);
+		}
+		// move rockets
+		for (i = 0; i < _rockets.length; i++)
+		{
+			var r = _rockets[i];
+			// apply acceleration
+			var mt = timeStep / r.mass;
+			r.velocityX += r.forceX * mt;
+			r.velocityY += r.forceY * mt;
+			r.posX += r.velocityX*timeStep;
+			r.posY += r.velocityY*timeStep;
+			// remove rockets out of sight
+			if (length(r.posX, r.posY) > spawnradius)
+			{
+				_rockets.splice(i--, 1);
+			}
+		}
+	};
+	
+	that.FireRocket = function()
+	{
+		var r = new Ballern.Rocket();
+		var p = _localPlayer;
+		r.posX = p.posX;
+		r.posY = p.posY;
+		r.destX = p.aimX;
+		r.destY = p.aimY;
+		r.velocityX = r.destX-r.posX;
+		r.velocityY = r.destY-r.posY;
+		var speed = _rocketSpeed / length(r.velocityX, r.velocityY);
+		r.velocityX *= speed;
+		r.velocityY *= speed;
+		r.mass = _rocketMass;
+		_rockets.push(r);
+	};
+	
+	// handles rendering of the whole scene
+	var Render = function()
+	{
+		ClearCanvas();
+		// translate center
+		_ctx.translate(_canvas.width/2, _canvas.height/2);
+		//var smaller = _canvas.width < _canvas.height ? _canvas.width : _canvas.height;
+		//var scale = smaller/smaller;
+		//_ctx.scale(scale, scale);
+		// draw sun
+		_ctx.lineWidth = 4;
+		_ctx.strokeStyle="#000000";
+		_ctx.beginPath();
+		_ctx.arc(0, 0, _sunSize, 0, Math.PI*2);
+		_ctx.stroke();
+		_ctx.textAlign = "center";
+		_ctx.textBaseline = "middle";
+		_ctx.fillStyle = "#000000";
+		_ctx.fillText("u mad?", 0, 0);
+		// draw players/planet
+		var i;
+		// draw orbit
+		_ctx.strokeStyle="#888888";
+		_ctx.lineWidth = 1;
+		_ctx.beginPath();
+		for (i = 0; i < _players.length; i++)
+		{
+			var p = _players[i];
+			_ctx.moveTo(p.radius, 0);
+			_ctx.dashedArc(0, 0, p.radius, 0, Math.PI*2, [5, 10]);
+		}
+		_ctx.stroke();
+		// draw rockets
+		_ctx.strokeStyle="#000000";
+		_ctx.fillStyle="#FF0000";
+		_ctx.lineWidth = 1;
+		_ctx.beginPath();
+		for (i = 0; i < _rockets.length; i++)
+		{
+			_ctx.save();
+			_ctx.translate(_rockets[i].posX, _rockets[i].posY);
+			var s = _rocketSize;
+			_ctx.rect(-s/2, -s/2, s, s);
+			_ctx.restore();
+		}
+		_ctx.fill();
+		_ctx.stroke();
+		// draw aiming
+		_ctx.strokeStyle="#000000";
+		_ctx.fillStyle="#FF0000";
+		_ctx.lineWidth = 1;
+		_ctx.beginPath();
+		for (i = 0; i < _players.length; i++)
+		{
+			var p = _players[i];
+			_ctx.save();
+			_ctx.translate(p.posX, p.posY);
+			_ctx.rotate(p.aimAngle);
+			_ctx.rect(0, -_playerSize/4, _playerSize*1.5, _playerSize/2);
+			_ctx.restore();
+		}
+		_ctx.fill();
+		_ctx.stroke();
+		// draw planets
+		_ctx.strokeStyle="#000000";
+		_ctx.fillStyle="#FFFFFF";
+		_ctx.lineWidth = 2;
+		_ctx.beginPath();
+		for (i = 0; i < _players.length; i++)
+		{
+			var p = _players[i];
+			_ctx.moveTo(p.posX + _playerSize, p.posY);
+			_ctx.arc(p.posX, p.posY, _playerSize, 0, Math.PI*2);
+		}
+		_ctx.fill();
+		_ctx.stroke();
+		// draw player names
+		_ctx.fillStyle="#000000";
+		for (i = 0; i < _players.length; i++)
+		{
+			var p = _players[i];
+			_ctx.fillText(p.name, p.posX, p.posY);
+		}
+		// draw asteroids
+		_ctx.strokeStyle="#000000";
+		_ctx.fillStyle="#CCCCCC";
+		_ctx.lineWidth = 1;
+		_ctx.beginPath();
+		for (i = 0; i < _asteroids.length; i++)
+		{
+			var a = _asteroids[i];
+			_ctx.save();
+			_ctx.translate(a.posX, a.posY);
+			_ctx.rotate(a.angle);
+			var s = a.size;
+			_ctx.rect(-s/2, -s/2, s, s);
+			_ctx.restore();
+		}
+		_ctx.fill();
+		_ctx.stroke();
+		// print information
+		_ctx.setTransform(1, 0, 0, 1, 0, 0);
+		_ctx.textAlign = "right";
+		_ctx.textBaseline = "top";
+		_ctx.fillStyle = "#000000";
+		var x = _canvas.width - 10;
+		var yy = 0;
+		var y = function() { yy += 15; return yy; };
+		//_ctx.fillText("Time per frame: " + Math.round(_tFrame) + "ms", x , y());
+		_ctx.fillText("Width: " + _canvas.width, x , y());
+		_ctx.fillText("Height: " + _canvas.height, x , y());
+		//_ctx.fillText("Scale: " + scale, x , y());
+		_ctx.fillText("FPS: " + Math.round(1000/_tFrame), x , y());
+		_ctx.fillText("Players: " + _players.length, x , y());
+		_ctx.fillText("Asteroids: " + _asteroids.length, x , y());
+		_ctx.fillText("Rockets: " + _rockets.length, x , y());
+	};
+		
+	var ClearCanvas = function()
+	{
+		if (that.enableMultisampling)
+		{
+			_ctx.fillStyle = "#FFFFFF";
+			_ctx.globalAlpha = 0.51;
+			_ctx.fillRect(0, 0, _canvas.width, _canvas.height);
+			_ctx.globalAlpha = 1;
+		}
+		else
+		{
+			_ctx.clearRect(0, 0, _canvas.width, _canvas.height);
+		}
+	};
+	
+	var Timing = function()
+	{
+		// get current time
+		var t = new Date().getTime();
+		// combine render times for the current and last frames
+		// this applies some averaging which prevents the number from jumping around too much
+		if (_tReference > 0)
+		{
+			var ratio = 0.9;
+			_tFrame = (t-_tReference)*(1-ratio)+_tFrame*ratio;
+		}
+		// set new time reference
+		_tReference = t;
+	};
+	
+	var MainLoop = function()
+	{
+		// request redraw
+		if (_running)
+		{
+			requestAnimFrame(MainLoop);
+		}
+		// maximum frame time prevents the system from exploding when the simulation runs very slow
+		var maxFrameTime = 40;
+		// calculate the time step of one frame
+		var timeStep = (_tFrame > maxFrameTime ? maxFrameTime : _tFrame) / 1000;
+		// calculate and apply movement
+		Update(timeStep);
+		// render the scene
+		Render();
+		// calculate timings
+		Timing();
+	};
+	
+	that.Run = function()
+	{
+		if (!_running)
+		{
+			_running = true;
+			// register mouse events
+			addEvent(_canvas, "mousedown", MouseDown);
+			addEvent(_canvas, "mousemove", MouseMove);
+			addEvent(_canvas, "touchstart", TouchStart);
+			addEvent(_canvas, "touchmove", TouchMove);
+			addEvent(_canvas, "touchend", TouchEnd);
+			requestAnimFrame(MainLoop);
+		}
+	};
+
+	that.Stop = function()
+	{
+		if (_running)
+		{
+			_running = false;
+			removeEvent(_canvas, "mousedown", MouseDown);
+			removeEvent(_canvas, "mousemove", MouseMove);
+			removeEvent(document, "touchstart", TouchStart);
+		}
+	};
+	
+	var TouchStart = function(e)
+	{
+		e.preventDefault();
+		SetPlayerAim(GetTouchPosition(e.changedTouches[0]));
+	};
+	
+	var TouchMove = function(e)
+	{
+		e.preventDefault();
+		SetPlayerAim(GetTouchPosition(e.targetTouches[e.targetTouches.length-1]));
+	};
+	
+	var TouchEnd = function(e)
+	{
+		that.FireRocket();
+	};
+	
+	var MouseDown = function(e)
+	{
+		SetPlayerAim(GetMousePosition(e));
+		// and fire rocket
+		that.FireRocket();
+	};
+	
+	var MouseMove = function(e)
+	{
+		SetPlayerAim(GetMousePosition(e));
+	};
+	
+	var SetPlayerAim = function(pos)
+	{
+		_localPlayer.aimX = pos.X - _canvas.width/2;
+		_localPlayer.aimY = pos.Y - _canvas.height/2;
+	};
+	
+	var GetMousePosition = function(e)
+	{
+		var pos = { X:0, Y:0 };
+		// retrieves position of the mouse
+		pos.X = (window.Event)? e.pageX: event.clientX;
+		pos.Y = (window.Event)? e.pageY: event.clientY;
+		pos.X -= _canvas.offsetLeft;
+		pos.Y -= _canvas.offsetTop;
+		return pos;
+	};
+	
+	var GetTouchPosition = function(touch)
+	{
+		var pos = { X:0, Y:0 };
+		// retrieves position of the touch
+		pos.X = touch.pageX;
+		pos.Y = touch.pageY;
+		return pos;
+	};
+	
+	// return public container
+	return that;
+};
+
+var game = null;
+
+function UpdateSize()
+{
+	// fill window with canvas
+	var canvas = document.getElementById("canvas");
+	canvas.width = window.innerWidth;
+	canvas.height = window.innerHeight;
+	//game.Render();
+}
+
+function Init()
+{
+	game = new Ballern.Game("canvas");
+	// resizing
+	window.onresize = UpdateSize;
+	UpdateSize();
+	game.Initialize();
+	game.Run();
+}
+
+</script>
+
+<style type="text/css">
+*
+{
+	margin: 0;
+	padding: 0;
+}
+
+html, body
+{
+	width: 100%;
+	height: 100%;
+}
+
+.infobox
+{
+	border: 1px solid gray;
+	padding: 5px;
+	background-color: rgba(192,192,192,0.25);
+	pointer-events: none;
+}
+
+#canvas
+{
+	display: block;
+}
+
+#header
+{
+	position: absolute;
+	top: 10px;
+	left: 50%;
+	width: 150px;
+	margin-left: -75 px;
+	text-align: center;
+}
+
+#author
+{
+	position: absolute;
+	left: 10px;
+	bottom: 10px;
+}
+
+#note
+{
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+}
+
+ul
+{
+   list-style-position: inside;
+}
+
+ul ul
+{
+	margin-left: 10px;
+}
+</style>
+<meta name="viewport" content="target-densitydpi=device-dpi, width=device-width" />
+</head>
+
+<body onload="Init();">
+<canvas id="canvas" onselectstart="return false;"></canvas>
+<div id="author">&copy; Gigo Bernack</div>
+<!--<div id="header" class="infobox">
+    <h1>Ballern</h1>
+</div>
+<div id="note" class="infobox">
+	<h2>Information</h2>
+	<ul>
+		<li>Der Gerät:</li>
+		<ul>
+			<li>lol</li>
+		</ul>
+	</ul>
+</div>-->
+</body>
+
+</html>
