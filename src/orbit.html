@@ -1,0 +1,918 @@
+<html>
+
+<head>
+<title>Orbit</title>
+<script src="lib/underscore-min.js"></script>
+<script src="lib/sylvester.js"></script>
+<script src="lib/KeyCode.js"></script>
+<script type="text/javascript" language="JavaScript">
+// heavily based on the Quirksmode addEvent contest winner, John Resig
+function addEvent(obj, type, fn) {
+    if (obj.addEventListener) obj.addEventListener(type, fn, false);
+    else if (obj.attachEvent) {
+        obj["e" + type + fn] = fn;
+        obj[type + fn] = function() {
+            obj["e" + type + fn](window.event);
+        };
+        obj.attachEvent("on" + type, obj[type + fn]);
+    }
+}
+
+function removeEvent(obj, type, fn) {
+    if (obj.removeEventListener) obj.removeEventListener(type, fn, false);
+    else if (obj.detachEvent) {
+        obj.detachEvent("on" + type, obj[type + fn]);
+        obj[type + fn] = null;
+        obj["e" + type + fn] = null;
+    }
+}
+
+// requestAnim shim layer by Paul Irish
+window.requestAnimFrame = window.requestAnimationFrame
+	|| window.webkitRequestAnimationFrame
+	|| window.mozRequestAnimationFrame
+	|| window.oRequestAnimationFrame
+	|| window.msRequestAnimationFrame
+	|| function(callback, element) { window.setTimeout(callback, 1000 / 60); };
+
+// extend canvas context prototype with custom drawing methods
+var CP = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+if (CP.lineTo) {
+	CP.drawArrow = function(x1, y1, x2, y2) {
+		// length of head in pixels
+		var d = 10;
+		// angle of the line
+		var a = Math.atan2(y2-y1,x2-x1);
+		// angle of the arrow lines to the angle of the line
+		var b = Math.PI/8;
+		// draw arrow
+		this.moveTo(x1, y1);
+		this.lineTo(x2, y2);
+		this.lineTo(x2 - Math.cos(a-b)*d, y2 - Math.sin(a-b)*d);
+		this.moveTo(x2, y2);
+		this.lineTo(x2 - Math.cos(a+b)*d, y2 - Math.sin(a+b)*d);
+	};
+	CP.line = function(x1, y1, x2, y2) {
+		this.beginPath();
+		this.moveTo(x1, y1);
+		this.lineTo(x2, y2);
+		this.stroke();
+	};
+}
+
+if (CP.arc) {
+	CP.ellipse = function(x, y, a, b, sAngle, eAngle, counterclockwise) {
+		this.save();
+		this.scale(1, b/a);
+		this.arc(x, y, a, sAngle, eAngle, counterclockwise);
+		this.restore();
+	};
+	CP.strokeArc = function(x, y, r, sAngle, eAngle, counterclockwise) {
+		this.beginPath();
+		this.arc(x, y, r, sAngle, eAngle, counterclockwise);
+		this.stroke();
+	};
+	CP.angleHint = function(name, angle, x, y, r) {
+		if (!r) r = 20;
+		this.save();
+		this.strokeStyle="#00FF00";
+		this.strokeArc(x, y, r+8, 0, angle, angle<0);
+		this.fillStyle = "#00FF00";
+		this.textAlign = "center";
+		this.textBaseline = "middle";
+		this.fillText(name, x+r*Math.cos(angle/2), y+r*Math.sin(angle/2));
+		this.restore();
+	};
+}
+	
+function trace(msg) {
+	if (typeof console != 'undefined' && typeof console.log != 'undefined') {
+		console.log(msg);
+	}
+}
+
+// ##### Inheritance crap #####
+function Inherit(base, constructor) {
+	return function creator(settings) {
+		// holds protected
+		var P = this;
+		// holds public
+		var O = {};
+		// call base constructors
+		if (base) {
+			O = base.call(this);
+		} else {
+			// wraps function call applying the right "this" object
+			//TODO: make super function available when overwriting
+			P.Wrap = function(func) {
+				return function() {
+					return func.apply(P, arguments);
+				};
+			}
+			// adds a public method
+			P.Public = function(funcs) {
+				for (var i = 0; i < arguments.length; i++) {
+					O[arguments[i].name] = P.Wrap(arguments[i]);
+				}
+			};
+			// adds a protected method
+			P.Protected = function(funcs) {
+				for (var i = 0; i < arguments.length; i++) {
+					P[arguments[i].name] = P.Wrap(arguments[i]);
+				}
+			};
+			// adds public properties
+			P.PublicProperties = function(props) {
+				_.extend(O, props);
+			};
+			// adds protected properties
+			P.ProtectedProperties = function(props) {
+				_.extend(P, props);
+			};
+			// type checks
+			P._types = [];
+			O.is = function(type) {
+				return P._types.indexOf(type) > -1;
+			};
+		}
+		// append current type to type names
+		P._types.push(creator);
+		//trace("constructor: " + constructor.name);
+		// call current instructor
+		constructor.call(this, O, P);
+		// only the first function call will have access to the settings argument, if any is given, and
+		// therefore use it to initialize public properties after all constructors have already been executed
+		if (settings) _.extend(O, settings);
+		// return the public object
+		return O;
+	};
+}
+
+// ##### Orbit #####
+var Orbit = Inherit(null, function Orbit(O,P) {
+	P.PublicProperties({
+		fatBody: null,
+		lightBody: null,
+		type: "unknown",
+		// eccentricity
+		ex: Vector.Zero(3),
+		e: 0,
+		// major-axis of ellipse
+		a: 0,
+		// minor-axis of ellipse
+		b: 0,
+		// rotation of the ellipse
+		omega: 0
+	});
+	// mean motion
+	var _n = 0;
+	// current mean anomaly
+	var _M = 0;
+	// current time
+	var _time = 0;
+	// approximated E for the current time
+	var _timeE = 0;
+	
+	function Valid() {
+		return O.fatBody && O.lightBody;
+	}
+
+	function Calculate(celestialBody, body) {
+		O.fatBody = celestialBody;
+		O.lightBody = body;
+		if (!Valid()) return;
+		// reset time
+		_time = 0;
+		// determine position and velocity relative to central body
+		var x = body.position.subtract(celestialBody.position);
+		var v = body.velocity.subtract(celestialBody.velocity);
+		// calculte orbital elements
+		var G = 1;
+		var mu = G * celestialBody.mass;
+		var r = x.modulus();
+		// angular momentum
+		var h = x.cross(v);
+		// eccentricity
+		O.ex = v.cross(h).multiply(1/mu).subtract(x.toUnitVector());
+		O.e = O.ex.modulus();
+		if (O.e == 0) {
+			O.type = "circle";
+		} else if (O.e < 1) {
+			O.type = "ellipse";
+		} else if (O.e == 1) {
+			O.type = "parabel";
+		} else {
+			O.type = "hyperbel";
+		}
+		// major-axis
+		O.a = h.dot(h)/(mu*(1-O.e*O.e));
+		// minor-axis
+		O.b = O.a*Math.sqrt(1-O.e*O.e);
+		// ellipse rotation
+		O.omega = Math.atan2(O.ex.e(2), O.ex.e(1));
+		// period
+		O.T = 2*Math.PI*Math.sqrt(O.a*O.a*O.a/mu);
+		// mean motion
+		_n = Math.sqrt(mu/O.a/O.a/O.a);
+		if (h.e(3) < 0) _n *= -1;
+		// calculate angle offset to the current position in orbit
+		_M = M_E(E_phi(Math.atan2(x.e(2), x.e(1)) - O.omega));
+		// make sure _timeE is up to date
+		O.Advance(0);
+	}
+	
+	// M: mean anomaly
+	// E: eccentric anomly, angle from center of ellipse (sometime tau)
+	// phi: true anomaly, angle from focus point
+	// r: radius, distance from focus point (sometime d)
+	// radius in terms of true (phi) and eccentric (E) anomaly
+	function R_phi(phi) { return O.a*(1-O.e*O.e)/(1+O.e*Math.cos(phi)); }
+	function R_E(E) { return O.a*(1-O.e*Math.cos(E)); }
+	// eccentric anomaly E in terms of the true anomaly phi
+	function E_phi(phi) { return Math.atan2(Math.sqrt(1-O.e*O.e)*Math.sin(phi), O.e+Math.cos(phi)); }
+	// true anomaly phi in terms of the eccentric anomaly E
+	function Phi_E(E) { return 2 * Math.atan(Math.sqrt((1+O.e)/(1-O.e))*Math.tan(E/2)); }
+	// mean anomaly in terms of the eccentric anomaly E and time t
+	function M_E(E) { return E - O.e*Math.sin(E); }
+	
+	function Kepler(E) { return E - O.e*Math.sin(E); }
+	function KeplerDerivative(E) { return 1 - O.e*Math.cos(E); }
+	
+	function NewtonApproximate(func, derivative, value, guess) {
+		var i = 0;
+		var maxI = 30;
+		var epsilon = 0.0000000000001;
+		var next = guess;
+		do {
+			var current = next;
+			next = current - (func(current)-value)/derivative(current);
+		} while (i++ < maxI && Math.abs(next-current) > epsilon);
+		//trace("newton iterations: " + i);
+		return next;
+	}
+	
+	function Advance(timeStep) {
+		if (!Valid()) return;
+		_time += timeStep;
+		var G = 1;
+		var mu = G*O.fatBody.mass;
+		// advance mean anomaly with the given timestep
+		_M += _n * timeStep;
+		// normalize mean anomaly to 0..2*pi
+		_M = _M % (2*Math.PI) + (_M<0?2*Math.PI:0);
+		// solve for eccentric anomaly, guess with the current mean anomaly
+		var E = NewtonApproximate(Kepler, KeplerDerivative, _M, O.e > 0.8 ? Math.PI : _M);
+		//if (Math.abs(_timeE - E) > 10) debugger;
+		_timeE = E;
+		O._E = _timeE;
+		O._M = _M;
+	}
+	
+	function ToCartesian(phi, r) {
+		var x = r * Math.cos(phi);
+		var y = r * Math.sin(phi);
+		return $V([x,y,0]).rotate(O.omega, Line.Z);
+	}
+	
+	function GetPositionPhi(phi) {
+		return ToCartesian(phi, R_phi(phi));
+	}
+	
+	function GetPosition() {
+		return ToCartesian(Phi_E(_timeE), R_E(_timeE)).add(O.fatBody.position);
+	}
+	
+	function GetVelocity() {
+		var phi = Phi_E(_timeE);
+		// determine velocity
+		var v = _n*O.a/Math.sqrt(1-O.e*O.e);
+		return $V([-Math.sin(phi), O.e+Math.cos(phi), 0]).multiply(v).rotate(O.omega, Line.Z).add(O.fatBody.velocity);;
+	}
+	
+	// draws the orbit in terms of the angle from the center point
+	function Draw(ctx, showHints) {
+		if (!Valid()) return;
+		ctx.save();
+		// translate to focus
+		ctx.translate(O.fatBody.position.e(1), O.fatBody.position.e(2));
+		// draw hints
+		if (showHints) DrawHints(ctx);
+		// rotate so that the major axis lies on the x-axis
+		ctx.rotate(O.omega);
+		// render ellipse
+		//DrawAlternate(ctx);
+		var steps = 100;
+		var offset = 0;
+		var range = 2*Math.PI;
+		ctx.beginPath();
+		for (var i = 0; i < steps+1; i++) {
+			var u = offset + range*i/steps;
+			var x = O.a * (Math.cos(u)-O.e);
+			var y = O.a * Math.sqrt(1 - O.e*O.e) * Math.sin(u);
+			if (i == 0) ctx.moveTo(x,y);
+			else ctx.lineTo(x,y);
+		}
+		ctx.strokeStyle="#0000FF";
+		ctx.stroke();
+		/*
+		ctx.beginPath();
+		ctx.ellipse(-O.a*O.e, 0, O.a, O.b, 0, 2*Math.PI);
+		ctx.strokeStyle="#0000FF";
+		ctx.stroke();
+		*/
+		ctx.rotate(-O.omega);
+		DrawExtreme(ctx);
+		ctx.restore();
+	}
+	
+	// draws the orbit in terms of the angle from the focus point (earth)
+	function DrawAlternate(ctx) {
+		var steps = 100;
+		ctx.beginPath();
+		var tmp = O.a*(1-O.e*O.e);
+		var offset = 0;
+		var range = 2*Math.PI;
+		if (O.e > 1) {
+			offset = -Math.PI/2;
+			range = Math.PI;
+		}
+		for (var i = 0; i < steps+1; i++) {
+			var phi = offset + range*i/steps;
+			var r = tmp / (1+O.e*Math.cos(phi));
+			if (i == 0) ctx.moveTo(Math.cos(phi)*r, Math.sin(phi)*r);
+			else ctx.lineTo(Math.cos(phi)*r, Math.sin(phi)*r);
+		}
+		ctx.strokeStyle="#0000FF";
+		ctx.stroke();
+	}
+	
+	function DrawExtreme(ctx) {
+		ctx.strokeStyle="#000000";
+		var d = 5;
+		var side = Math.abs(O.omega) < Math.PI/2;
+		// periapsis
+		x = GetPositionPhi(0);
+		ctx.strokeRect(x.e(1)-d, x.e(2)-d, 2*d, 2*d);
+		ctx.textAlign = side ? "left" : "right";
+		ctx.fillText("periapsis", x.e(1)+ d*(side?2:-2), x.e(2));
+		if (O.e < 1) {
+			// apoapsis
+			x = GetPositionPhi(Math.PI);
+			ctx.strokeRect(x.e(1)-d, x.e(2)-d, 2*d, 2*d);
+			ctx.textAlign = side ? "right" : "left";
+			ctx.fillText("apoapsis", x.e(1)+d*(side?-2:2), x.e(2));
+		}
+	}
+	
+	function DrawHints(ctx) {
+		ctx.save();
+		// draw horizontal orientation line
+		ctx.strokeStyle="#AAAAAA";
+		var h = O.fatBody.GetInfluenceRadius();
+		ctx.line(-h, 0, h, 0);
+		// draw line from focus to body
+		var phi = Phi_E(_timeE);
+		var x = GetPositionPhi(phi);
+		ctx.line(0, 0, x.e(1), x.e(2));
+		// draw omega angle
+		ctx.angleHint("w", O.omega, 0, 0, 35);
+		// set colors
+		ctx.fillStyle = "#000000";
+		ctx.strokeStyle="#FFAAAA";
+		// rotate so that the major axis lies on the x-axis
+		ctx.rotate(O.omega);
+		ctx.angleHint("phi", phi, 0, 0);
+		// draw major-axis and eccentric circle
+		ctx.line(O.a*(1-O.e), 0, O.a*(-1-O.e), 0);
+		ctx.strokeArc(-O.a * O.e, 0, O.a, 0, 2*Math.PI);
+		// mark focus and center point
+		var d = 5;
+		ctx.fillText("F", d, 3*d);
+		ctx.line(0, d, 0, -d);
+		ctx.fillText("C", -O.a*O.e, 3*d);
+		ctx.line(-O.a*O.e, d, -O.a*O.e, -d);
+		// draw construction triangle via eccentric anomaly
+		var E = _timeE % (2*Math.PI);
+		var C = -O.a*O.e;
+		ctx.beginPath();
+		ctx.moveTo(C, 0);
+		ctx.lineTo(C+O.a*Math.cos(E), O.a*Math.sin(E));
+		ctx.lineTo(C+O.a*Math.cos(E), 0);
+		ctx.stroke();
+		ctx.angleHint("E", E, C, 0);
+		var g = (Math.abs(E)/Math.PI+(E>0?1:0))%2;
+		ctx.angleHint("+", (g>1?1:-1)*Math.PI/2, C+O.a*Math.cos(E), 0, 8);
+		ctx.restore();
+	}
+
+	// define publicly available functions
+	P.Public(Calculate, Advance, GetPosition, GetVelocity, Draw, Valid);
+});
+
+// ##### Body #####
+var Body = Inherit(null, function Body(O,P) {
+	P.PublicProperties({
+		name: "body",
+		mass: 1,
+		position: $V([0,0,0]),
+		velocity: $V([0,0,0]),
+		angle: 0,
+		angleSpeed: 0,
+		orbit: new Orbit()
+	});
+	
+	var _centralBody = null;
+	
+	function RefreshOrbit(celestialBody) {
+		var recalculate = arguments.length == 0;
+		if (celestialBody && celestialBody != _centralBody) {
+			//O.velocity = O.velocity.subtract(celestialBody.velocity);
+			_centralBody = celestialBody;
+			recalculate = true;
+		}
+		if (recalculate) {
+			O.orbit.Calculate(_centralBody, O);
+			Update(0);
+		}
+	}
+	
+	function Update(timeStep) {
+		if (O.orbit.Valid()) {
+			O.orbit.Advance(timeStep);
+			O.position = O.orbit.GetPosition();
+			O.velocity = O.orbit.GetVelocity();
+		}
+		O.angle += O.angleSpeed*timeStep;
+	}
+	
+	P.Public(RefreshOrbit, Update);
+});
+
+// ##### CelestialBody #####
+var CelestialBody = Inherit(Body, function CelestialBody(O,P) {
+	P.PublicProperties({
+		radius: 60,
+		fixed: false
+	});
+	
+	function GetInfluenceRadius() {
+		var o = O.orbit;
+		if (!o.Valid()) return null;
+		return o.a*(1-o.e)*Math.pow(o.lightBody.mass/o.fatBody.mass, 1/3);
+	}
+	
+	function Draw(ctx) {
+		ctx.save();
+		ctx.translate(O.position.e(1), O.position.e(2));
+		ctx.strokeStyle="#000000";
+		//ctx.strokeArc(0, 0, O.radius, 0, Math.PI*2);
+		
+		var steps = 100;
+		var offset = 0;
+		var range = 2*Math.PI;
+		var phi = 0;
+		var step = 2*Math.PI/steps;
+		ctx.beginPath();
+		for (var i = 0; i < steps+1; i++) {
+			phi += step;
+			var r = O.radius + 10*Math.sin(7*phi)*Math.sin(18*phi);
+			var x = r * Math.cos(phi)
+			var y = r * Math.sin(phi);
+			if (i == 0) ctx.moveTo(x,y);
+			else ctx.lineTo(x,y);
+		}
+		ctx.strokeStyle="#000000";
+		ctx.fill();
+		
+		var influence = GetInfluenceRadius();
+		if (influence) {
+			ctx.strokeStyle="#BBBBBB";
+			ctx.strokeArc(0, 0, influence, 0, Math.PI*2);
+		}
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.fillStyle = "#FFFFFF";
+		ctx.fillText(O.name, 0, 0);
+		ctx.restore();
+	}
+	
+	P.Public(GetInfluenceRadius, Draw);
+});
+
+// ##### Vessel #####
+var Vessel = Inherit(Body, function Vessel(O,P) {
+	P.PublicProperties({
+		size: 5
+	});
+	
+	function Draw(ctx, showInfo) {
+		ctx.save();
+		ctx.translate(O.position.e(1), O.position.e(2));
+		ctx.fillStyle = showInfo ? "#000000" : "#888888";
+		// draw vessel body
+		ctx.save();
+		ctx.rotate(O.angle);
+		var s = O.size;
+		ctx.fillRect(-s, -s, 2*s, 2*s);
+		ctx.restore();
+		if (showInfo) {
+			// draw label
+			ctx.textAlign = "left";
+			ctx.fillText(O.name, 2*O.size, 0);
+			// draw velocity vector
+			ctx.strokeStyle="#FF0000";
+			ctx.beginPath();
+			var v = O.velocity.subtract(O.orbit.fatBody.velocity);
+			ctx.drawArrow(0, 0, v.e(1), v.e(2));
+			ctx.stroke();
+		}
+		ctx.restore();
+	}
+	
+	P.Public(Draw);
+});
+
+var Game = Inherit(null, function Game(O,P) {
+	P.PublicProperties({
+		rendering: {
+			multisampling: false,
+			hints: false
+		},
+		canvasid: "canvas",
+		gravity: 1
+	});
+	var _running = false;
+	// convas
+	var _canvas;
+	var _ctx;
+	// timings (in ms)
+	var _tReference = 0;
+	var _tFrame = 0;
+	var _tTotal = 0;
+	// universe
+	var _bodies = [];
+	var _controlled = null;
+	var _focus = null;
+	// visuals
+	var _scale = 0.1;
+	
+	function Initialize() {
+		_canvas = document.getElementById(O.canvasid);
+		_ctx = _canvas.getContext("2d");
+		RegisterEvents();
+	}
+	
+	function AddBody(body) {
+		_bodies.push(body);
+		body.RefreshOrbit();
+	}
+	
+	function SetFocusBody(body) {
+		_focus = body;
+	}
+	
+	function SetControlledBody(body) {
+		_controlled = body;
+	}
+	
+	function Update(timeStep) {
+		// move all bodies along their orbits
+		for (var i = 0; i < _bodies.length; i++) {
+			CheckInfluence(_bodies[i]);
+		}
+		// move all bodies along their orbits
+		for (var i = 0; i < _bodies.length; i++) {
+			_bodies[i].Update(timeStep);
+		}
+		//trace("M: " + _controlled.orbit._M);
+		//trace("E: " + _controlled.orbit._E);
+		//trace("pos: " + _controlled.position.subtract(_controlled.orbit.fatBody.position).elements);
+	}
+	
+	function CheckInfluence(body) {
+		if (body.fixed) return;
+		var centralBody = null;
+		var checked = [];
+		for (var i = 0; i < _bodies.length; i++) {
+			var cBody = _bodies[i];
+			if (cBody != body && cBody.is(CelestialBody) && checked.indexOf(cBody) < 0) {
+				var distance = body.position.subtract(cBody.position).modulus();
+				var influence = cBody.GetInfluenceRadius();
+				if (!influence || distance < influence) {
+					if (!centralBody) {
+						centralBody = cBody;
+					} else {
+						// step through chain of 2-body systems
+						var parent = cBody.orbit.fatBody;
+						while (parent && checked.indexOf(parent) < 0) {
+							// if current centralBody is found we are acutally further down the chain
+							// and set the current one as the new centralBody
+							if (centralBody == parent) {
+								centralBody = cBody;
+							}
+							// all bodies along the chain can be sorted out as candidates
+							checked.push(parent);
+							parent = parent.orbit.fatBody;
+						}
+						// if current body was not found along the chain the current central body
+						// must be further down the chain and therefore be left as the correct body
+					}
+				}
+			}
+		}
+		// body is outside of any influence
+		//if (!centralBody) trace(body.name + " is weg");
+		// refresh orbit with respect to the given central body
+		if (centralBody) body.RefreshOrbit(centralBody);
+	}
+	
+	// handles rendering of the whole scene
+	function Render() {
+		ClearCanvas();
+		// translate to the canvas center
+		_ctx.translate(_canvas.width/2+0.5, _canvas.height/2+0.5);
+		// scale depending on distance to earth distance
+		var d = _controlled.position.subtract(_controlled.orbit.fatBody.position).modulus();
+		var s = 0.5*_canvas.width/(_controlled.orbit.b+d);
+		var ratio = 0.99;
+		_scale = _scale*ratio+(1-ratio)*s;
+		_ctx.scale(_scale, _scale);
+		_ctx.lineWidth = 1.5/_scale;
+		// translate to focus object
+		_ctx.translate(-_focus.position.e(1), -_focus.position.e(2));
+		// draw universe
+		_controlled.orbit.Draw(_ctx, O.rendering.hints);
+		for (var i = 0; i < _bodies.length; i++) {
+			//_bodies[i].orbit.Draw(_ctx);
+			_bodies[i].Draw(_ctx, _bodies[i] == _controlled);
+		}
+		// output debug information
+		PrintInformation();
+	}
+	
+	function PrintInformation() {
+		_ctx.setTransform(1, 0, 0, 1, 0, 0);
+		_ctx.textAlign = "right";
+		_ctx.textBaseline = "top";
+		_ctx.fillStyle = "#000000";
+		var o = _controlled.orbit;
+		var x = _canvas.width - 10;
+		var yy = 0;
+		var y = function() { yy += 15; return yy; };
+		_ctx.fillText("Width: " + _canvas.width, x , y());
+		_ctx.fillText("Height: " + _canvas.height, x , y());
+		_ctx.fillText("FPS: " + Math.round(1000/_tFrame), x , y());
+		_ctx.fillText("Time: " + Math.floor(_tTotal/1000), x , y());
+		_ctx.fillText("Scale: " + Math.floor(_scale*100)/100, x , y());
+		_ctx.fillText("Trajectory details: " + o.type, x , y());
+		var d = _controlled.position.subtract(_controlled.orbit.fatBody.position).modulus();
+		_ctx.fillText("Distance to central body: " + Math.round(d), x , y());
+		_ctx.fillText("Major-axis: " + Math.round(o.a), x , y());
+		_ctx.fillText("Minor-axis: " + Math.round(o.b), x , y());
+		_ctx.fillText("Eccentricity: " + Math.round(o.e*100)/100, x , y());
+		_ctx.fillText("Linear eccentricity: " + Math.round(o.e*o.a), x , y());
+		_ctx.fillText("Max distance: " + Math.round(o.a*(o.e+1)), x , y());
+		_ctx.fillText("Omega: " + Math.round(o.omega*100)/100, x , y());
+	}
+		
+	function ClearCanvas() {
+		if (O.rendering.multisampling) {
+			_ctx.fillStyle = "#FFFFFF";
+			_ctx.globalAlpha = 0.51;
+			_ctx.fillRect(0, 0, _canvas.width, _canvas.height);
+			_ctx.globalAlpha = 1;
+		} else {
+			_ctx.clearRect(0, 0, _canvas.width, _canvas.height);
+		}
+	}
+	
+	function Timing() {
+		// get current time
+		var t = new Date().getTime();
+		// combine render times for the current and last frames
+		// this applies some averaging which prevents the number from jumping around too much
+		if (_tReference > 0) {
+			var ratio = 0.9;
+			_tFrame = (t-_tReference)*(1-ratio)+_tFrame*ratio;
+		}
+		// set new time reference
+		_tReference = t;
+		// increment total passed time
+		_tTotal += _tFrame;
+	}
+	
+	function MainLoop() {
+		// request redraw
+		if (_running) {
+			requestAnimFrame(MainLoop);
+		}
+		// maximum frame time prevents the system from exploding when the simulation runs very slow
+		var maxFrameTime = 40;
+		// calculate the time step of one frame
+		var timeStep = (_tFrame > maxFrameTime ? maxFrameTime : _tFrame) / 1000;
+		// calculate and apply movement
+		Update(timeStep);
+		// render the scene
+		Render();
+		// calculate timings
+		Timing();
+	}
+	
+	function Run() {
+		if (!_running)
+		{
+			// prevent timing jumps when restarting animation
+			Timing();
+			_tFrame = 0;
+			// start main loop
+			_running = true;
+			requestAnimFrame(MainLoop);
+		}
+	}
+
+	function Stop() {
+		// main loop will stop after next iteration
+		_running = false;
+	}
+	
+	function RegisterEvents() {
+		addEvent(document, "keydown", KeyDown);
+		addEvent(document, "keyup", KeyUp);
+	}
+	
+	function KeyDown(e) {
+		// trace("keydown keycode: " + e.keyCode);
+		if (e.keyCode >= 37 && e.keyCode <= 40) {
+			var step = 1;
+			var v = _controlled.velocity;
+			switch (e.keyCode) {
+				// left
+				case KeyCode.VK_LEFT: v.elements[0] -= step; break;
+				// up
+				case KeyCode.VK_UP: v.elements[1] -= step; break;
+				// right
+				case KeyCode.VK_RIGHT: v.elements[0] += step; break;
+				// down
+				case KeyCode.VK_DOWN: v.elements[1] += step; break;
+			}
+			// recalculate orbit
+			_controlled.RefreshOrbit();
+		}
+		if (e.keyCode == KeyCode.VK_H) O.rendering.hints = !O.rendering.hints;
+		//if (e.keyCode == KeyCode.VK_E) _focus = _earth;
+		//if (e.keyCode == KeyCode.VK_V) _focus = _vessel;
+		if (e.keyCode == KeyCode.VK_SPACE) if (_running) Stop(); else Run();
+		Render();
+	}
+	
+	function KeyUp(e) {
+	}
+	
+	P.Public(Initialize, AddBody, SetFocusBody, SetControlledBody, Run, Stop, Render);
+});
+
+var sun = new CelestialBody({
+	name: "sun",
+	mass: 100000000,
+	radius: 500,
+	fixed: true
+});
+var earth = new CelestialBody({
+	name: "earth",
+	mass: 1000000,
+	radius: 100,
+	position: $V([5000,0,0]),
+	velocity: $V([0,-140,0])
+});
+var moon = new CelestialBody({
+	name: "moon",
+	mass: 100000,
+	radius: 25,
+	position: earth.position.add($V([750,0,0])),
+	velocity: earth.velocity.add($V([0,-37.5,0]))
+});
+var shuttle = new Vessel({
+	name: "space shuttle",
+	mass: 1,
+	position: earth.position.add($V([150,0,0])),
+	velocity: earth.velocity.add($V([0,-80,0]))
+});
+
+earth.RefreshOrbit(sun);
+moon.RefreshOrbit(earth);
+shuttle.RefreshOrbit(earth);
+
+function AddDebris(n) {
+	for (var i = 0; i < n; i++) {
+		var phi = Math.PI/20*Math.random();
+		var x = 10*Math.random();
+		var v = -80;
+		var debris = new Vessel({
+			name: "debris",
+			mass: 1,
+			position: earth.position.add($V([180+x,0,0])),
+			velocity: earth.velocity.add($V([v*Math.sin(phi),v*Math.cos(phi),0]))
+		});
+		game.AddBody(debris);
+	}
+}
+
+var game = new Game({
+	rendering: { hints: false }
+});
+game.AddBody(sun);
+game.AddBody(earth);
+game.AddBody(moon);
+game.AddBody(shuttle);
+game.SetControlledBody(shuttle);
+game.SetFocusBody(shuttle);
+AddDebris(50);
+
+function UpdateSize() {
+	// fill window with canvas
+	var canvas = document.getElementById("canvas");
+	canvas.width = window.innerWidth;
+	canvas.height = window.innerHeight;
+	game.Render();
+}
+
+function Init() {
+	// resizing
+	window.onresize = UpdateSize;
+	game.Initialize();
+	UpdateSize();
+	game.Run();
+}
+
+</script>
+
+<style type="text/css">
+*
+{
+	margin: 0;
+	padding: 0;
+}
+
+html, body
+{
+	width: 100%;
+	height: 100%;
+}
+
+#canvas
+{
+	display: block;
+}
+
+#author
+{
+	position: absolute;
+	left: 10px;
+	bottom: 10px;
+}
+
+#note
+{
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+}
+
+.infobox
+{
+	border: 1px solid gray;
+	padding: 5px;
+	background-color: rgba(256,256,256,0.8);
+}
+
+ul
+{
+   list-style-position: inside;
+}
+
+ul ul
+{
+	margin-left: 10px;
+}
+
+h2
+{
+	font-size: 14pt;
+}
+</style>
+<meta name="viewport" content="target-densitydpi=device-dpi, width=device-width" />
+</head>
+
+<body onload="Init();">
+<canvas id="canvas" onselectstart="return false;"></canvas>
+<div id="author">&copy; J.C. Bernack</div>
+<div id="note" class="infobox">
+	<h2>Controls</h2>
+	<ul>
+		<li>Space bar - Pause movement</li>
+		<li>Arrow keys - Adjust velocity</li>
+	</ul>
+</div>
+</body>
+
+</html>
